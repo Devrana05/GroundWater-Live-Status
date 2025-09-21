@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <script>
+        const theme=localStorage.getItem('theme')||'light';
+        if(theme==='dark')document.documentElement.className='dark-theme';
+        localStorage.setItem('theme',theme);
+    </script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Data Explorer - Groundwater Monitoring</title>
+    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <script src="theme-init.js"></script>
+</head>
+<body>
+    <!-- Header -->
+    <header class="header">
+        <div class="header-left">
+            <button class="sidebar-toggle" id="sidebarToggle">
+                <i class="fas fa-bars"></i>
+            </button>
+            <div class="logo">
+                <i class="fas fa-tint"></i>
+                <h1>Data Explorer</h1>
+            </div>
+        </div>
+        <div class="header-right">
+            <button class="notification-btn" id="notificationBtn">
+                <i class="fas fa-bell"></i>
+                <span class="notification-badge">2</span>
+                <script>
+                    const isCleared=localStorage.getItem('notificationsCleared')==='true';
+                    const badge=document.querySelector('.notification-badge');
+                    if(isCleared){badge.textContent='0';badge.style.display='none';}
+                </script>
+            </button>
+            <div class="notification-popup" id="notificationPopup">
+                <div class="popup-header">
+                    <h4>Active Alerts</h4>
+                    <button class="close-btn" id="closePopup"><i class="fas fa-times"></i></button>
+                </div>
+                <div class="popup-content">
+                    <div class="popup-alert critical" data-alert-id="ST001-critical" onclick="navigateToAlert('ST001-critical')">
+                        <i class="fas fa-exclamation-circle"></i>
+                        <div>
+                            <h5>ST001 - Critical Water Level</h5>
+                            <p>15.2m below threshold</p>
+                            <span>2 min ago</span>
+                        </div>
+                    </div>
+                    <div class="popup-alert warning" data-alert-id="ST002-warning" onclick="navigateToAlert('ST002-warning')">
+                        <i class="fas fa-exclamation-triangle"></i>
+                        <div>
+                            <h5>ST002 - Low Battery</h5>
+                            <p>Battery at 18%</p>
+                            <span>1 hour ago</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="popup-footer">
+                    <button class="clear-all-btn" onclick="clearAllNotifications()">Clear All</button>
+                    <a href="alerts.html" class="view-all-btn">View All Alerts</a>
+                </div>
+            </div>
+            <div class="theme-toggle">
+                <input type="checkbox" id="themeToggle" class="theme-checkbox">
+                <label for="themeToggle" class="theme-label">
+                    <i class="fas fa-sun"></i>
+                    <i class="fas fa-moon"></i>
+                    <span class="theme-slider"></span>
+                </label>
+                <script>document.getElementById('themeToggle').checked=localStorage.getItem('theme')==='dark';</script>
+            </div>
+            <button class="profile-btn" id="profileBtn">
+                <i class="fas fa-user-circle"></i>
+            </button>
+            <div class="profile-popup" id="profilePopup">
+                <div class="profile-section">
+                    <div class="profile-info">
+                        <i class="fas fa-user-circle profile-avatar"></i>
+                        <div>
+                            <h4>John Doe</h4>
+                            <p>Administrator</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="profile-menu">
+                    <button class="profile-menu-item" id="profileSettings">
+                        <i class="fas fa-cog"></i>
+                        <span>Profile Settings</span>
+                    </button>
+                    <button class="profile-menu-item logout" id="logoutBtn">
+                        <i class="fas fa-sign-out-alt"></i>
+                        <span>Logout</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Sidebar -->
+    <nav class="sidebar" id="sidebar">
+        <ul class="nav-menu">
+            <li class="nav-item">
+                <a href="index.html" class="nav-link">
+                    <i class="fas fa-chart-line"></i>
+                    <span>Dashboard</span>
+                </a>
+            </li>
+            <li class="nav-item active">
+                <a href="data-explorer.html" class="nav-link">
+                    <i class="fas fa-database"></i>
+                    <span>Data Explorer</span>
+                </a>
+            </li>
+            <li class="nav-item">
+                <a href="alerts.html" class="nav-link">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <span>Alerts</span>
+                </a>
+            </li>
+            <li class="nav-item">
+                <a href="stations.html" class="nav-link">
+                    <i class="fas fa-broadcast-tower"></i>
+                    <span>Stations</span>
+                </a>
+            </li>
+            <li class="nav-item">
+                <a href="help.html" class="nav-link">
+                    <i class="fas fa-question-circle"></i>
+                    <span>Help</span>
+                </a>
+            </li>
+        </ul>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="main-content">
+        <!-- Page Header -->
+        <div class="page-header">
+            <h2><i class="fas fa-database"></i> Data Explorer</h2>
+            <p>Comprehensive view of all groundwater monitoring data</p>
+        </div>
+
+        <!-- Filters -->
+        <div class="filter-bar">
+            <div class="filter-group">
+                <label>Date Range:</label>
+                <input type="date" id="startDate" value="2024-01-01">
+                <input type="date" id="endDate" value="2024-01-31">
+            </div>
+            <div class="filter-group">
+                <label>Station:</label>
+                <select id="stationFilter">
+                    <option value="all">All Stations</option>
+                    <option value="ST001">Station 001</option>
+                    <option value="ST002">Station 002</option>
+                    <option value="ST003">Station 003</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label>Status:</label>
+                <select id="statusFilter">
+                    <option value="all">All Status</option>
+                    <option value="critical">Critical</option>
+                    <option value="warning">Warning</option>
+                    <option value="normal">Normal</option>
+                </select>
+            </div>
+            <button class="export-btn" id="exportData">
+                <i class="fas fa-download"></i> Export Data
+            </button>
+        </div>
+
+        <!-- Data Overview Cards -->
+        <div class="overview-cards">
+            <div class="overview-card critical">
+                <div class="card-icon">
+                    <i class="fas fa-exclamation-circle"></i>
+                </div>
+                <div class="card-content">
+                    <h3>Critical Stations</h3>
+                    <span class="count">1</span>
+                    <p>Below 20m threshold</p>
+                </div>
+            </div>
+            <div class="overview-card warning">
+                <div class="card-icon">
+                    <i class="fas fa-exclamation-triangle"></i>
+                </div>
+                <div class="card-content">
+                    <h3>Warning Stations</h3>
+                    <span class="count">1</span>
+                    <p>Below 30m threshold</p>
+                </div>
+            </div>
+            <div class="overview-card normal">
+                <div class="card-icon">
+                    <i class="fas fa-check-circle"></i>
+                </div>
+                <div class="card-content">
+                    <h3>Normal Stations</h3>
+                    <span class="count">1</span>
+                    <p>Above 30m threshold</p>
+                </div>
+            </div>
+            <div class="overview-card total">
+                <div class="card-icon">
+                    <i class="fas fa-database"></i>
+                </div>
+                <div class="card-content">
+                    <h3>Total Records</h3>
+                    <span class="count">2,847</span>
+                    <p>Last 30 days</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Data Table -->
+        <div class="widget data-table-widget">
+            <div class="widget-header">
+                <h3><i class="fas fa-table"></i> Station Data</h3>
+                <div class="table-controls">
+                    <input type="search" placeholder="Search..." id="searchInput">
+                    <select id="recordsPerPage">
+                        <option value="25">25 per page</option>
+                        <option value="50">50 per page</option>
+                        <option value="100">100 per page</option>
+                    </select>
+                </div>
+            </div>
+            <div class="table-container">
+                <table class="data-table" id="dataTable">
+                    <thead>
+                        <tr>
+                            <th>Station ID</th>
+                            <th>Timestamp</th>
+                            <th>Water Level (m)</th>
+                            <th>Battery (%)</th>
+                            <th>Temperature (°C)</th>
+                            <th>Status</th>
+                            <th>Quality</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="dataTableBody">
+                        <tr>
+                            <td>ST001</td>
+                            <td>2024-01-15 14:30:00</td>
+                            <td>18.5</td>
+                            <td>85.2</td>
+                            <td>22.1</td>
+                            <td><span class="status critical">Critical</span></td>
+                            <td><span class="quality-flag good">Good</span></td>
+                            <td>
+                                <button class="action-btn view" title="View Details">
+                                    <i class="fas fa-eye"></i>
+                                </button>
+                                <button class="action-btn edit" title="Edit">
+                                    <i class="fas fa-edit"></i>
+                                </button>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td>ST002</td>
+                            <td>2024-01-15 14:29:45</td>
+                            <td>42.1</td>
+                            <td>92.1</td>
+                            <td>21.8</td>
+                            <td><span class="status normal">Normal</span></td>
+                            <td><span class="quality-flag good">Good</span></td>
+                            <td>
+                                <button class="action-btn view" title="View Details">
+                                    <i class="fas fa-eye"></i>
+                                </button>
+                                <button class="action-btn edit" title="Edit">
+                                    <i class="fas fa-edit"></i>
+                                </button>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td>ST003</td>
+                            <td>2024-01-15 14:00:12</td>
+                            <td>--</td>
+                            <td>78.5</td>
+                            <td>--</td>
+                            <td><span class="status warning">No Data</span></td>
+                            <td><span class="quality-flag poor">Poor</span></td>
+                            <td>
+                                <button class="action-btn view" title="View Details">
+                                    <i class="fas fa-eye"></i>
+                                </button>
+                                <button class="action-btn edit" title="Edit">
+                                    <i class="fas fa-edit"></i>
+                                </button>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            <div class="pagination">
+                <button class="page-btn" id="prevPage">Previous</button>
+                <span class="page-info">Page 1 of 114</span>
+                <button class="page-btn" id="nextPage">Next</button>
+            </div>
+        </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="footer-content">
+            <p>&copy; 2025 Groundwater Monitoring System. Version 2.1.0</p>
+            <div class="footer-links">
+                <a href="#">Privacy Policy</a>
+                <a href="#">Terms of Service</a>
+                <a href="#">Support</a>
+            </div>
+        </div>
+    </footer>
+
+    <script src="shared-notifications.js"></script>
+    <script src="data-explorer.js"></script>
+</body>
+</html>
