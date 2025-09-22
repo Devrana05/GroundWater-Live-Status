@@ -1,342 +1,347 @@
+import json
+import time
 import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
+from email.mime.text import MimeText
+from email.mime.multipart import MimeMultipart
 import psycopg2
 from psycopg2.extras import RealDictCursor
-import os
-import json
-from datetime import datetime, timedelta
 from kafka import KafkaConsumer
-import logging
+import os
+from datetime import datetime, timedelta
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# Configuration
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:password@localhost:5432/groundwater")
+KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
+SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com")
+SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+SMTP_USER = os.getenv("SMTP_USER", "")
+SMTP_PASS = os.getenv("SMTP_PASS", "")
+
+def get_db_connection():
+    return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
 
 class AlertEngine:
     def __init__(self):
-        self.db_url = os.getenv("DATABASE_URL", "postgresql://postgres:password@localhost:5432/groundwater")
-        self.kafka_servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
-        
-        # Email configuration
-        self.smtp_host = os.getenv("SMTP_HOST", "smtp.gmail.com")
-        self.smtp_port = int(os.getenv("SMTP_PORT", "587"))
-        self.smtp_user = os.getenv("SMTP_USER", "")
-        self.smtp_password = os.getenv("SMTP_PASSWORD", "")
-        
-        # Alert thresholds
-        self.thresholds = {
-            'critical_low_level': 20.0,  # meters
-            'warning_low_level': 30.0,   # meters
-            'high_rate_change': 5.0,     # meters per hour
-            'device_offline_minutes': 60, # minutes
-            'low_battery': 20.0          # percentage
-        }
-        
-        # Kafka consumer for real-time alerts
-        self.consumer = KafkaConsumer(
-            'dwlr_readings',
-            bootstrap_servers=[self.kafka_servers],
-            value_deserializer=lambda x: json.loads(x.decode('utf-8')),
-            group_id='alert_engine'
-        )
+        self.alert_cooldown = {}  # Prevent spam alerts
     
-    def get_db_connection(self):
-        return psycopg2.connect(self.db_url, cursor_factory=RealDictCursor)
-    
-    def check_water_level_alerts(self, well_id, current_level):
-        """Check for water level threshold alerts"""
-        alerts = []
-        
-        if current_level <= self.thresholds['critical_low_level']:
-            alerts.append({
-                'well_id': well_id,
-                'alert_type': 'critical_low_level',
-                'severity': 'critical',
-                'message': f'Water level critically low: {current_level}m',
-                'threshold_value': self.thresholds['critical_low_level'],
-                'actual_value': current_level
-            })
-        elif current_level <= self.thresholds['warning_low_level']:
-            alerts.append({
-                'well_id': well_id,
-                'alert_type': 'warning_low_level',
-                'severity': 'warning',
-                'message': f'Water level low: {current_level}m',
-                'threshold_value': self.thresholds['warning_low_level'],
-                'actual_value': current_level
-            })
-        
-        return alerts
-    
-    def check_rate_change_alerts(self, well_id):
-        """Check for rapid water level changes"""
+    def send_email_alert(self, to_email, subject, message):
+        """Send email notification"""
         try:
-            conn = self.get_db_connection()
+            if not SMTP_USER or not SMTP_PASS:
+                print("SMTP credentials not configured")
+                return False
+            
+            msg = MimeMultipart()
+            msg['From'] = SMTP_USER
+            msg['To'] = to_email
+            msg['Subject'] = subject
+            
+            msg.attach(MimeText(message, 'plain'))
+            
+            server = smtplib.SMTP(SMTP_HOST, SMTP_PORT)
+            server.starttls()
+            server.login(SMTP_USER, SMTP_PASS)
+            text = msg.as_string()
+            server.sendmail(SMTP_USER, to_email, text)
+            server.quit()
+            
+            print(f"Email sent to {to_email}")
+            return True
+        
+        except Exception as e:
+            print(f"Email sending error: {e}")
+            return False
+    
+    def check_cooldown(self, well_id, alert_type):
+        """Check if alert is in cooldown period"""
+        key = f"{well_id}:{alert_type}"
+        if key in self.alert_cooldown:
+            last_sent = self.alert_cooldown[key]
+            if datetime.now() - last_sent < timedelta(hours=1):  # 1 hour cooldown
+                return True
+        return False
+    
+    def set_cooldown(self, well_id, alert_type):
+        """Set cooldown for alert type"""
+        key = f"{well_id}:{alert_type}"
+        self.alert_cooldown[key] = datetime.now()
+    
+    def process_water_level_alert(self, data):
+        """Process water level related alerts"""
+        try:
+            well_id = data['well_id']
+            water_level = data['water_level']
+            
+            conn = get_db_connection()
             cur = conn.cursor()
             
-            # Get last 2 hours of data
+            # Get well information and thresholds
             cur.execute("""
-                SELECT water_level, time
-                FROM measurements_clean
-                WHERE well_id = %s 
-                AND time > NOW() - INTERVAL '2 hours'
-                ORDER BY time DESC
-                LIMIT 10
+                SELECT w.*, u.email, u.full_name
+                FROM wells w
+                LEFT JOIN users u ON u.role = 'admin' OR u.username = 'admin'
+                WHERE w.well_id = %s
             """, (well_id,))
             
-            readings = cur.fetchall()
-            cur.close()
-            conn.close()
+            well_info = cur.fetchone()
+            if not well_info:
+                return
             
-            if len(readings) < 2:
-                return []
+            alert_created = False
             
-            # Calculate rate of change
-            latest = readings[0]
-            previous = readings[-1]
+            # Check critical level
+            if water_level <= well_info['critical_level']:
+                if not self.check_cooldown(well_id, 'critical'):
+                    # Create alert
+                    cur.execute("""
+                        INSERT INTO alerts (well_id, alert_type, severity, message, threshold_value, current_value)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                        RETURNING id
+                    """, (
+                        well_id,
+                        'critical_water_level',
+                        'critical',
+                        f'CRITICAL: Water level at {well_info["name"]} is critically low at {water_level}m (threshold: {well_info["critical_level"]}m)',
+                        well_info['critical_level'],
+                        water_level
+                    ))
+                    
+                    alert_id = cur.fetchone()['id']
+                    alert_created = True
+                    
+                    # Send email notification
+                    if well_info['email']:
+                        subject = f"CRITICAL ALERT: {well_info['name']} Water Level"
+                        message = f"""
+                        CRITICAL WATER LEVEL ALERT
+                        
+                        Station: {well_info['name']} ({well_id})
+                        Current Level: {water_level}m
+                        Critical Threshold: {well_info['critical_level']}m
+                        
+                        Immediate action required!
+                        
+                        Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+                        """
+                        
+                        self.send_email_alert(well_info['email'], subject, message)
+                    
+                    self.set_cooldown(well_id, 'critical')
             
-            time_diff = (latest['time'] - previous['time']).total_seconds() / 3600  # hours
-            level_diff = abs(latest['water_level'] - previous['water_level'])
+            # Check warning level
+            elif water_level <= well_info['warning_level']:
+                if not self.check_cooldown(well_id, 'warning'):
+                    # Create alert
+                    cur.execute("""
+                        INSERT INTO alerts (well_id, alert_type, severity, message, threshold_value, current_value)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                        RETURNING id
+                    """, (
+                        well_id,
+                        'low_water_level',
+                        'warning',
+                        f'WARNING: Water level at {well_info["name"]} is below warning threshold at {water_level}m (threshold: {well_info["warning_level"]}m)',
+                        well_info['warning_level'],
+                        water_level
+                    ))
+                    
+                    alert_created = True
+                    
+                    # Send email notification
+                    if well_info['email']:
+                        subject = f"WARNING: {well_info['name']} Water Level"
+                        message = f"""
+                        WATER LEVEL WARNING
+                        
+                        Station: {well_info['name']} ({well_id})
+                        Current Level: {water_level}m
+                        Warning Threshold: {well_info['warning_level']}m
+                        
+                        Please monitor closely.
+                        
+                        Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+                        """
+                        
+                        self.send_email_alert(well_info['email'], subject, message)
+                    
+                    self.set_cooldown(well_id, 'warning')
             
-            if time_diff > 0:
-                rate = level_diff / time_diff
-                
-                if rate > self.thresholds['high_rate_change']:
-                    return [{
-                        'well_id': well_id,
-                        'alert_type': 'high_rate_change',
-                        'severity': 'warning',
-                        'message': f'Rapid water level change: {rate:.2f}m/h',
-                        'threshold_value': self.thresholds['high_rate_change'],
-                        'actual_value': rate
-                    }]
-            
-            return []
-            
-        except Exception as e:
-            logger.error(f"Rate change check error: {e}")
-            return []
-    
-    def check_device_offline_alerts(self):
-        """Check for offline devices"""
-        try:
-            conn = self.get_db_connection()
-            cur = conn.cursor()
-            
-            # Find wells with no recent data
-            cur.execute("""
-                SELECT w.well_id, w.name,
-                       MAX(m.time) as last_reading
-                FROM wells w
-                LEFT JOIN measurements_clean m ON w.well_id = m.well_id
-                WHERE w.status = 'active'
-                GROUP BY w.well_id, w.name
-                HAVING MAX(m.time) < NOW() - INTERVAL '%s minutes'
-                   OR MAX(m.time) IS NULL
-            """, (self.thresholds['device_offline_minutes'],))
-            
-            offline_wells = cur.fetchall()
-            cur.close()
-            conn.close()
-            
-            alerts = []
-            for well in offline_wells:
-                alerts.append({
-                    'well_id': well['well_id'],
-                    'alert_type': 'device_offline',
-                    'severity': 'warning',
-                    'message': f'Device offline for {self.thresholds["device_offline_minutes"]} minutes',
-                    'threshold_value': self.thresholds['device_offline_minutes'],
-                    'actual_value': None
-                })
-            
-            return alerts
-            
-        except Exception as e:
-            logger.error(f"Device offline check error: {e}")
-            return []
-    
-    def check_battery_alerts(self, well_id, battery_level):
-        """Check for low battery alerts"""
-        if battery_level and battery_level <= self.thresholds['low_battery']:
-            return [{
-                'well_id': well_id,
-                'alert_type': 'low_battery',
-                'severity': 'warning',
-                'message': f'Low battery: {battery_level}%',
-                'threshold_value': self.thresholds['low_battery'],
-                'actual_value': battery_level
-            }]
-        return []
-    
-    def create_alert(self, alert_data):
-        """Create alert in database"""
-        try:
-            conn = self.get_db_connection()
-            cur = conn.cursor()
-            
-            # Check if similar alert already exists and is active
-            cur.execute("""
-                SELECT id FROM alerts
-                WHERE well_id = %s 
-                AND alert_type = %s 
-                AND is_active = true
-                AND created_at > NOW() - INTERVAL '1 hour'
-            """, (alert_data['well_id'], alert_data['alert_type']))
-            
-            if cur.fetchone():
-                cur.close()
-                conn.close()
-                return None  # Don't create duplicate alert
-            
-            # Create new alert
-            cur.execute("""
-                INSERT INTO alerts 
-                (well_id, alert_type, severity, message, threshold_value, actual_value)
-                VALUES (%s, %s, %s, %s, %s, %s)
-                RETURNING id
-            """, (
-                alert_data['well_id'],
-                alert_data['alert_type'],
-                alert_data['severity'],
-                alert_data['message'],
-                alert_data.get('threshold_value'),
-                alert_data.get('actual_value')
-            ))
-            
-            alert_id = cur.fetchone()[0]
             conn.commit()
             cur.close()
             conn.close()
             
-            logger.info(f"Created alert {alert_id} for well {alert_data['well_id']}")
-            return alert_id
-            
-        except Exception as e:
-            logger.error(f"Alert creation error: {e}")
-            return None
-    
-    def send_email_alert(self, alert_data):
-        """Send email notification for alert"""
-        if not self.smtp_user or not self.smtp_password:
-            logger.warning("Email credentials not configured")
-            return False
+            if alert_created:
+                print(f"Alert created for well {well_id}")
         
+        except Exception as e:
+            print(f"Water level alert processing error: {e}")
+    
+    def process_battery_alert(self, data):
+        """Process battery level alerts"""
         try:
-            # Get recipient emails
-            conn = self.get_db_connection()
+            well_id = data['well_id']
+            battery_level = data.get('battery_level')
+            
+            if battery_level is None or battery_level > 20:  # Only alert if below 20%
+                return
+            
+            if self.check_cooldown(well_id, 'battery_low'):
+                return
+            
+            conn = get_db_connection()
             cur = conn.cursor()
             
+            # Get well information
             cur.execute("""
-                SELECT email FROM users 
-                WHERE role IN ('admin', 'manager') 
-                AND is_active = true
-            """)
+                SELECT w.*, u.email
+                FROM wells w
+                LEFT JOIN users u ON u.role = 'admin'
+                WHERE w.well_id = %s
+                LIMIT 1
+            """, (well_id,))
             
-            recipients = [row[0] for row in cur.fetchall()]
+            well_info = cur.fetchone()
+            if not well_info:
+                return
+            
+            # Create battery alert
+            cur.execute("""
+                INSERT INTO alerts (well_id, alert_type, severity, message, threshold_value, current_value)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            """, (
+                well_id,
+                'battery_low',
+                'warning' if battery_level > 10 else 'critical',
+                f'Battery level low at {well_info["name"]}: {battery_level}%',
+                20.0,
+                battery_level
+            ))
+            
+            # Send email if configured
+            if well_info['email']:
+                subject = f"Battery Alert: {well_info['name']}"
+                message = f"""
+                BATTERY LEVEL ALERT
+                
+                Station: {well_info['name']} ({well_id})
+                Battery Level: {battery_level}%
+                
+                Device may stop reporting soon. Please replace battery.
+                
+                Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+                """
+                
+                self.send_email_alert(well_info['email'], subject, message)
+            
+            conn.commit()
             cur.close()
             conn.close()
             
-            if not recipients:
-                logger.warning("No email recipients found")
-                return False
-            
-            # Create email
-            msg = MIMEMultipart()
-            msg['From'] = self.smtp_user
-            msg['To'] = ', '.join(recipients)
-            msg['Subject'] = f"Groundwater Alert: {alert_data['alert_type']} - {alert_data['well_id']}"
-            
-            body = f"""
-            Alert Details:
-            
-            Well ID: {alert_data['well_id']}
-            Alert Type: {alert_data['alert_type']}
-            Severity: {alert_data['severity']}
-            Message: {alert_data['message']}
-            
-            Threshold: {alert_data.get('threshold_value', 'N/A')}
-            Actual Value: {alert_data.get('actual_value', 'N/A')}
-            
-            Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-            
-            Please check the dashboard for more details.
-            """
-            
-            msg.attach(MIMEText(body, 'plain'))
-            
-            # Send email
-            server = smtplib.SMTP(self.smtp_host, self.smtp_port)
-            server.starttls()
-            server.login(self.smtp_user, self.smtp_password)
-            server.send_message(msg)
-            server.quit()
-            
-            logger.info(f"Email alert sent for {alert_data['well_id']}")
-            return True
-            
+            self.set_cooldown(well_id, 'battery_low')
+            print(f"Battery alert created for well {well_id}")
+        
         except Exception as e:
-            logger.error(f"Email sending error: {e}")
-            return False
+            print(f"Battery alert processing error: {e}")
     
-    def process_real_time_data(self, data):
-        """Process incoming data for real-time alerts"""
-        well_id = data['well_id']
-        water_level = data.get('water_level')
-        battery_level = data.get('battery_level')
-        
-        all_alerts = []
-        
-        # Check water level alerts
-        if water_level:
-            all_alerts.extend(self.check_water_level_alerts(well_id, water_level))
-        
-        # Check battery alerts
-        if battery_level:
-            all_alerts.extend(self.check_battery_alerts(well_id, battery_level))
-        
-        # Check rate change alerts
-        all_alerts.extend(self.check_rate_change_alerts(well_id))
-        
-        # Create and send alerts
-        for alert_data in all_alerts:
-            alert_id = self.create_alert(alert_data)
-            if alert_id and alert_data['severity'] in ['critical', 'warning']:
-                self.send_email_alert(alert_data)
-    
-    def run_periodic_checks(self):
-        """Run periodic alert checks"""
-        logger.info("Running periodic alert checks...")
-        
-        # Check for offline devices
-        offline_alerts = self.check_device_offline_alerts()
-        
-        for alert_data in offline_alerts:
-            alert_id = self.create_alert(alert_data)
-            if alert_id:
-                self.send_email_alert(alert_data)
-    
-    def run_real_time_processor(self):
-        """Run real-time alert processor"""
-        logger.info("Starting real-time alert processor...")
-        
+    def process_device_offline_alert(self, well_id):
+        """Check for devices that haven't reported recently"""
         try:
-            for message in self.consumer:
-                data = message.value
-                self.process_real_time_data(data)
+            if self.check_cooldown(well_id, 'device_offline'):
+                return
+            
+            conn = get_db_connection()
+            cur = conn.cursor()
+            
+            # Check last measurement time
+            cur.execute("""
+                SELECT w.*, m.time as last_reading, u.email
+                FROM wells w
+                LEFT JOIN LATERAL (
+                    SELECT time FROM measurements_clean 
+                    WHERE well_id = w.well_id 
+                    ORDER BY time DESC LIMIT 1
+                ) m ON true
+                LEFT JOIN users u ON u.role = 'admin'
+                WHERE w.well_id = %s
+            """, (well_id,))
+            
+            well_info = cur.fetchone()
+            if not well_info or not well_info['last_reading']:
+                return
+            
+            # Check if device is offline (no data for 2+ hours)
+            time_diff = datetime.now() - well_info['last_reading'].replace(tzinfo=None)
+            if time_diff < timedelta(hours=2):
+                return
+            
+            # Create offline alert
+            cur.execute("""
+                INSERT INTO alerts (well_id, alert_type, severity, message, threshold_value, current_value)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            """, (
+                well_id,
+                'device_offline',
+                'critical',
+                f'Device at {well_info["name"]} appears offline. Last reading: {well_info["last_reading"]}',
+                2.0,  # 2 hours threshold
+                time_diff.total_seconds() / 3600  # Hours offline
+            ))
+            
+            # Send email notification
+            if well_info['email']:
+                subject = f"Device Offline: {well_info['name']}"
+                message = f"""
+                DEVICE OFFLINE ALERT
                 
-        except KeyboardInterrupt:
-            logger.info("Stopping alert processor...")
+                Station: {well_info['name']} ({well_id})
+                Last Reading: {well_info['last_reading']}
+                Offline Duration: {time_diff}
+                
+                Please check device connectivity and power.
+                
+                Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+                """
+                
+                self.send_email_alert(well_info['email'], subject, message)
+            
+            conn.commit()
+            cur.close()
+            conn.close()
+            
+            self.set_cooldown(well_id, 'device_offline')
+            print(f"Device offline alert created for well {well_id}")
+        
         except Exception as e:
-            logger.error(f"Alert processor error: {e}")
-        finally:
-            self.consumer.close()
+            print(f"Device offline alert processing error: {e}")
 
-if __name__ == "__main__":
+def main():
+    """Main alert processing loop"""
+    print("Starting Alert Engine...")
+    
     engine = AlertEngine()
     
-    # Run periodic checks first
-    engine.run_periodic_checks()
+    # Initialize Kafka consumer
+    consumer = KafkaConsumer(
+        'dwlr_readings',
+        bootstrap_servers=[KAFKA_BOOTSTRAP_SERVERS],
+        value_deserializer=lambda x: json.loads(x.decode('utf-8')),
+        group_id='alert_engine'
+    )
     
-    # Start real-time processing
-    engine.run_real_time_processor()
+    print("Listening for measurements...")
+    
+    # Process incoming measurements
+    for message in consumer:
+        try:
+            data = message.value
+            
+            # Process different types of alerts
+            engine.process_water_level_alert(data)
+            engine.process_battery_alert(data)
+            
+        except Exception as e:
+            print(f"Message processing error: {e}")
+            continue
+
+if __name__ == "__main__":
+    main()

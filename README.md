@@ -5,8 +5,9 @@ A complete end-to-end solution for real-time groundwater resource evaluation usi
 ## 🚀 Quick Start
 
 ### Prerequisites
+- Docker & Docker Compose (Recommended)
 - Web Browser (Chrome, Firefox, Safari)
-- Python 3.8+ (for backend services)
+- Python 3.8+ (for development)
 
 ### 1. Clone Repository
 ```bash
@@ -14,7 +15,17 @@ git clone <repository-url>
 cd SIH
 ```
 
-### 2. Frontend Access
+### 2. Full Stack Deployment (Recommended)
+```bash
+# Windows
+start.bat
+
+# Linux/Mac
+chmod +x start.sh
+./start.sh
+```
+
+### 3. Frontend Only (Development)
 ```bash
 # Open HTML files directly in browser
 open index.html
@@ -22,14 +33,17 @@ open index.html
 python -m http.server 8080
 ```
 
-### 3. Backend Services (Optional)
+### 4. Manual Backend Setup
 ```bash
 # Install dependencies
 pip install -r requirements.txt
 
-# Start ingest service
-cd services/ingest
-python main.py
+# Start individual services
+cd services/api && python main.py
+cd services/ingest && python main.py
+cd services/etl && python processor.py
+cd services/ml && python models.py
+cd services/alerts && python engine.py
 ```
 
 ## 📊 Features
@@ -158,7 +172,6 @@ python test_data_generator.py
 - **Interactive Maps** - Station locations with color-coded status indicators
 - **Data Filtering** - Station and status-based filtering in data explorer
 - **Alert Management** - Cross-page notification system with filtering
-- **Mobile Navigation** - Touch-friendly collapsible sidebar
 - **Data Ingestion API** - FastAPI backend for DWLR data collection
 - **MQTT Integration** - Real-time device communication support
 
@@ -170,9 +183,46 @@ python test_data_generator.py
 
 ## 🚀 Getting Started
 
-1. **Frontend Only** - Open `index.html` in any modern web browser
-2. **With Backend** - Run `python -m http.server 8080` and visit `http://localhost:80respons80`
-3. **Full Stack** - Use `docker-compose up -d` to start all services
+### Option 1: Full Stack (Recommended)
+```bash
+# Windows
+start.bat
+
+# Linux/Mac
+chmod +x start.sh && ./start.sh
+```
+
+### Option 2: Docker Compose
+```bash
+docker-compose up -d --build
+```
+
+### Option 3: Frontend Only
+```bash
+# Open index.html in browser or
+python -m http.server 8080
+```
+
+### Option 4: Development Mode
+```bash
+# Start individual services
+cd services/api && python main.py
+cd services/ingest && python main.py
+# etc...
+```
+
+## 🌐 Access Points
+
+- **Web Dashboard**: http://localhost
+- **Mobile Interface**: http://mobile.localhost
+- **API Documentation**: http://localhost/api/docs
+- **Mobile API Docs**: http://mobile.localhost/api/docs
+- **Grafana Monitoring**: http://localhost:3002 (admin/admin)
+- **Prometheus Metrics**: http://localhost:9090
+
+## 👤 Default Login
+- **Username**: admin
+- **Password**: admin123
 
 ## 📄 License
 

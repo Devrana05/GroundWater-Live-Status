@@ -20,12 +20,14 @@ let chartDataCache = {};
 
 // Sidebar Toggle Functionality
 function initSidebarToggle() {
-    if (window.innerWidth > 768) {
-        sidebarToggle.addEventListener('click', (e) => {
-            e.stopPropagation();
+    sidebarToggle.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (window.innerWidth > 768) {
             sidebar.classList.toggle('collapsed');
-        });
-    }
+        } else {
+            sidebar.classList.toggle('open');
+        }
+    });
 }
 
 // Prevent sidebar expansion on nav link clicks when collapsed
@@ -45,6 +47,7 @@ function initNavLinks() {
 
 initSidebarToggle();
 initNavLinks();
+initSidebarClose();
 
 // Threshold Slider
 thresholdSlider.addEventListener('input', (e) => {
@@ -56,6 +59,15 @@ stationSelect.addEventListener('change', (e) => {
     selectedStation = e.target.value;
     updateChartForStationFast(selectedStation);
     updateSummaryForStation(selectedStation);
+    
+    // Scroll to chart for better UX
+    const chartWidget = document.querySelector('.chart-widget');
+    if (chartWidget) {
+        chartWidget.scrollIntoView({ 
+            behavior: 'smooth', 
+            block: 'center' 
+        });
+    }
 });
 
 // Initialize Map
@@ -494,24 +506,26 @@ async function updateSummaryCards(summary = null) {
 
 // Mobile sidebar handling
 function handleMobileMenu() {
-    // Remove existing listeners
-    sidebarToggle.removeEventListener('click', toggleSidebar);
-    document.removeEventListener('click', closeSidebarOutside);
-    
     if (window.innerWidth <= 768) {
-        sidebarToggle.addEventListener('click', toggleSidebar);
         document.addEventListener('click', closeSidebarOutside);
+    } else {
+        document.removeEventListener('click', closeSidebarOutside);
     }
-}
-
-function toggleSidebar(e) {
-    e.stopPropagation();
-    sidebar.classList.toggle('open');
 }
 
 function closeSidebarOutside(e) {
     if (!sidebar.contains(e.target) && !sidebarToggle.contains(e.target)) {
         sidebar.classList.remove('open');
+    }
+}
+
+// Sidebar close button
+function initSidebarClose() {
+    const sidebarClose = document.getElementById('sidebarClose');
+    if (sidebarClose) {
+        sidebarClose.addEventListener('click', () => {
+            sidebar.classList.remove('open');
+        });
     }
 }
 

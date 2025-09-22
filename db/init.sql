@@ -1,138 +1,125 @@
--- Enable TimescaleDB and PostGIS extensions
-CREATE EXTENSION IF NOT EXISTS timescaledb;
-CREATE EXTENSION IF NOT EXISTS postgis;
+-- Enable TimescaleDB extension
+CREATE EXTENSION IF NOT EXISTS timescaledb CASCADE;
 
--- Wells table
-CREATE TABLE wells (
+-- Users table for authentication
+CREATE TABLE IF NOT EXISTS users (
     id SERIAL PRIMARY KEY,
-    well_id VARCHAR(50) UNIQUE NOT NULL,
-    name VARCHAR(100),
-    location GEOMETRY(POINT, 4326),
+    username VARCHAR(50) UNIQUE NOT NULL,
+    email VARCHAR(100) UNIQUE NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    full_name VARCHAR(100),
+    role VARCHAR(20) DEFAULT 'user',
+    created_at TIMESTAMP DEFAULT NOW(),
+    last_login TIMESTAMP,
+    is_active BOOLEAN DEFAULT true
+);
+
+-- Wells/Stations table
+CREATE TABLE IF NOT EXISTS wells (
+    well_id VARCHAR(50) PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
     latitude DECIMAL(10, 8),
     longitude DECIMAL(11, 8),
-    depth_total DECIMAL(8, 2),
-    installation_date DATE,
+    depth DECIMAL(8, 2),
+    critical_level DECIMAL(8, 2),
+    warning_level DECIMAL(8, 2),
     status VARCHAR(20) DEFAULT 'active',
-    metadata JSONB,
-    created_at TIMESTAMP DEFAULT NOW(),
-    updated_at TIMESTAMP DEFAULT NOW()
+    installation_date DATE,
+    created_at TIMESTAMP DEFAULT NOW()
 );
 
--- Raw measurements table (hypertable)
-CREATE TABLE measurements_raw (
+-- Raw measurements table
+CREATE TABLE IF NOT EXISTS measurements_raw (
+    id BIGSERIAL,
     time TIMESTAMPTZ NOT NULL,
     well_id VARCHAR(50) NOT NULL,
     water_level DECIMAL(8, 2),
     battery_level DECIMAL(5, 2),
     temperature DECIMAL(5, 2),
-    quality_flag VARCHAR(10) DEFAULT 'good',
-    device_status VARCHAR(20) DEFAULT 'online',
+    device_status VARCHAR(20),
     raw_data JSONB,
-    created_at TIMESTAMPTZ DEFAULT NOW()
+    created_at TIMESTAMP DEFAULT NOW(),
+    PRIMARY KEY (id, time)
 );
 
--- Convert to hypertable
-SELECT create_hypertable('measurements_raw', 'time');
-
--- Cleaned measurements table (hypertable)
-CREATE TABLE measurements_clean (
+-- Clean measurements table (after ETL processing)
+CREATE TABLE IF NOT EXISTS measurements_clean (
+    id BIGSERIAL,
     time TIMESTAMPTZ NOT NULL,
     well_id VARCHAR(50) NOT NULL,
     water_level DECIMAL(8, 2),
     battery_level DECIMAL(5, 2),
     temperature DECIMAL(5, 2),
-    quality_flag VARCHAR(10) DEFAULT 'good',
-    is_interpolated BOOLEAN DEFAULT FALSE,
-    processing_notes TEXT,
-    created_at TIMESTAMPTZ DEFAULT NOW()
+    device_status VARCHAR(20),
+    quality_score DECIMAL(3, 2),
+    PRIMARY KEY (id, time),
+    FOREIGN KEY (well_id) REFERENCES wells(well_id)
 );
-
-SELECT create_hypertable('measurements_clean', 'time');
 
 -- Alerts table
-CREATE TABLE alerts (
+CREATE TABLE IF NOT EXISTS alerts (
     id SERIAL PRIMARY KEY,
     well_id VARCHAR(50) NOT NULL,
     alert_type VARCHAR(50) NOT NULL,
     severity VARCHAR(20) NOT NULL,
     message TEXT,
     threshold_value DECIMAL(8, 2),
-    actual_value DECIMAL(8, 2),
-    is_active BOOLEAN DEFAULT TRUE,
-    acknowledged BOOLEAN DEFAULT FALSE,
-    acknowledged_by VARCHAR(100),
-    acknowledged_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    resolved_at TIMESTAMPTZ
-);
-
--- ML Models table
-CREATE TABLE ml_models (
-    id SERIAL PRIMARY KEY,
-    model_name VARCHAR(100) NOT NULL,
-    model_type VARCHAR(50) NOT NULL,
-    well_id VARCHAR(50),
-    model_data BYTEA,
-    metrics JSONB,
-    version VARCHAR(20),
-    is_active BOOLEAN DEFAULT TRUE,
-    created_at TIMESTAMPTZ DEFAULT NOW()
+    current_value DECIMAL(8, 2),
+    is_active BOOLEAN DEFAULT true,
+    created_at TIMESTAMP DEFAULT NOW(),
+    resolved_at TIMESTAMP,
+    FOREIGN KEY (well_id) REFERENCES wells(well_id)
 );
 
 -- Forecasts table
-CREATE TABLE forecasts (
+CREATE TABLE IF NOT EXISTS forecasts (
     id SERIAL PRIMARY KEY,
     well_id VARCHAR(50) NOT NULL,
     forecast_time TIMESTAMPTZ NOT NULL,
     predicted_level DECIMAL(8, 2),
     confidence_lower DECIMAL(8, 2),
     confidence_upper DECIMAL(8, 2),
-    model_id INTEGER REFERENCES ml_models(id),
-    created_at TIMESTAMPTZ DEFAULT NOW()
+    model_version VARCHAR(20),
+    created_at TIMESTAMP DEFAULT NOW(),
+    FOREIGN KEY (well_id) REFERENCES wells(well_id)
 );
 
--- Users table
-CREATE TABLE users (
-    id SERIAL PRIMARY KEY,
-    username VARCHAR(50) UNIQUE NOT NULL,
-    email VARCHAR(100) UNIQUE NOT NULL,
-    password_hash VARCHAR(255) NOT NULL,
-    role VARCHAR(20) DEFAULT 'viewer',
-    is_active BOOLEAN DEFAULT TRUE,
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
+-- Convert tables to hypertables for time-series optimization
+SELECT create_hypertable('measurements_raw', 'time', if_not_exists => TRUE);
+SELECT create_hypertable('measurements_clean', 'time', if_not_exists => TRUE);
 
--- Indexes
-CREATE INDEX idx_measurements_raw_well_time ON measurements_raw (well_id, time DESC);
-CREATE INDEX idx_measurements_clean_well_time ON measurements_clean (well_id, time DESC);
-CREATE INDEX idx_alerts_well_active ON alerts (well_id, is_active);
-CREATE INDEX idx_forecasts_well_time ON forecasts (well_id, forecast_time);
-CREATE INDEX idx_wells_location ON wells USING GIST (location);
+-- Create indexes for better performance
+CREATE INDEX IF NOT EXISTS idx_measurements_raw_well_time ON measurements_raw (well_id, time DESC);
+CREATE INDEX IF NOT EXISTS idx_measurements_clean_well_time ON measurements_clean (well_id, time DESC);
+CREATE INDEX IF NOT EXISTS idx_alerts_well_active ON alerts (well_id, is_active);
+CREATE INDEX IF NOT EXISTS idx_forecasts_well_time ON forecasts (well_id, forecast_time);
 
--- Sample data
-INSERT INTO wells (well_id, name, latitude, longitude, depth_total) VALUES
-('ST001', 'Station 001', 28.6139, 77.2090, 50.0),
-('ST002', 'Station 002', 28.6289, 77.2194, 60.0),
-('ST003', 'Station 003', 28.6089, 77.1986, 45.0);
+-- Insert default admin user (password: admin123)
+INSERT INTO users (username, email, password_hash, full_name, role) 
+VALUES ('admin', 'admin@groundwater.com', '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewdBPj3QJflLxQjO', 'System Administrator', 'admin')
+ON CONFLICT (username) DO NOTHING;
 
-UPDATE wells SET location = ST_SetSRID(ST_MakePoint(longitude, latitude), 4326);
+-- Insert sample wells
+INSERT INTO wells (well_id, name, latitude, longitude, depth, critical_level, warning_level) VALUES
+('ST001', 'Station Alpha', 28.6139, 77.2090, 50.0, 10.0, 15.0),
+('ST002', 'Station Beta', 28.7041, 77.1025, 45.0, 8.0, 12.0),
+('ST003', 'Station Gamma', 28.5355, 77.3910, 60.0, 12.0, 18.0),
+('ST004', 'Station Delta', 28.4595, 77.0266, 55.0, 9.0, 14.0),
+('ST005', 'Station Echo', 28.6692, 77.4538, 48.0, 11.0, 16.0)
+ON CONFLICT (well_id) DO NOTHING;
 
--- Sample measurements
-INSERT INTO measurements_raw (time, well_id, water_level, battery_level, temperature) VALUES
-(NOW() - INTERVAL '1 hour', 'ST001', 18.5, 85.2, 22.1),
-(NOW() - INTERVAL '2 hours', 'ST001', 18.7, 85.0, 22.3),
-(NOW() - INTERVAL '1 hour', 'ST002', 42.1, 92.1, 21.8),
-(NOW() - INTERVAL '2 hours', 'ST002', 42.3, 92.0, 21.9);
+-- Insert sample measurements
+INSERT INTO measurements_clean (time, well_id, water_level, battery_level, temperature, device_status, quality_score) VALUES
+(NOW() - INTERVAL '1 hour', 'ST001', 25.5, 85.2, 22.1, 'online', 0.95),
+(NOW() - INTERVAL '2 hours', 'ST001', 25.3, 84.8, 22.3, 'online', 0.94),
+(NOW() - INTERVAL '1 hour', 'ST002', 18.7, 78.5, 21.8, 'online', 0.96),
+(NOW() - INTERVAL '2 hours', 'ST002', 18.9, 78.1, 21.6, 'online', 0.95),
+(NOW() - INTERVAL '1 hour', 'ST003', 32.1, 92.3, 23.2, 'online', 0.97),
+(NOW() - INTERVAL '2 hours', 'ST003', 31.8, 91.9, 23.0, 'online', 0.96)
+ON CONFLICT DO NOTHING;
 
--- Copy to clean table
-INSERT INTO measurements_clean (time, well_id, water_level, battery_level, temperature)
-SELECT time, well_id, water_level, battery_level, temperature FROM measurements_raw;
-
--- Sample alerts
-INSERT INTO alerts (well_id, alert_type, severity, message, threshold_value, actual_value) VALUES
-('ST001', 'low_water_level', 'critical', 'Water level below critical threshold', 20.0, 18.5),
-('ST003', 'device_offline', 'warning', 'No data received for 30 minutes', NULL, NULL);
-
--- Default user
-INSERT INTO users (username, email, password_hash, role) VALUES
-('admin', 'admin@groundwater.com', '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewdBPj3bp.Gm.F5u', 'admin');
+-- Insert sample alerts
+INSERT INTO alerts (well_id, alert_type, severity, message, threshold_value, current_value) VALUES
+('ST002', 'low_water_level', 'warning', 'Water level approaching warning threshold', 12.0, 18.7),
+('ST001', 'battery_low', 'info', 'Battery level below 90%', 90.0, 85.2)
+ON CONFLICT DO NOTHING;

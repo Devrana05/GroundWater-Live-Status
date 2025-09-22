@@ -1,6 +1,8 @@
-from fastapi import FastAPI, HTTPException, Depends, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Depends, WebSocket, WebSocketDisconnect, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 import psycopg2
 from psycopg2.extras import RealDictCursor
 import json
@@ -9,6 +11,9 @@ from datetime import datetime, timedelta
 from typing import List, Optional
 import asyncio
 import redis
+from passlib.context import CryptContext
+from jose import JWTError, jwt
+import secrets
 
 app = FastAPI(title="Groundwater Monitoring API", version="1.0.0")
 
@@ -24,6 +29,13 @@ app.add_middleware(
 # Configuration
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:password@localhost:5432/groundwater")
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
+SECRET_KEY = os.getenv("SECRET_KEY", secrets.token_urlsafe(32))
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 30
+
+# Password hashing
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+security = HTTPBearer()
 
 # Redis client for caching
 redis_client = redis.from_url(REDIS_URL)
@@ -49,11 +61,112 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
+# Pydantic models
+class UserLogin(BaseModel):
+    username: str
+    password: str
+
+class UserProfile(BaseModel):
+    username: str
+    email: str
+    full_name: str
+    role: str = "user"
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+
 def get_db_connection():
     return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
 
+def verify_password(plain_password, hashed_password):
+    return pwd_context.verify(plain_password, hashed_password)
+
+def get_password_hash(password):
+    return pwd_context.hash(password)
+
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
+    to_encode = data.copy()
+    if expires_delta:
+        expire = datetime.utcnow() + expires_delta
+    else:
+        expire = datetime.utcnow() + timedelta(minutes=15)
+    to_encode.update({"exp": expire})
+    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    return encoded_jwt
+
+async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    credentials_exception = HTTPException(
+        status_code=401,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(credentials.credentials, SECRET_KEY, algorithms=[ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None:
+            raise credentials_exception
+    except JWTError:
+        raise credentials_exception
+    
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM users WHERE username = %s", (username,))
+    user = cur.fetchone()
+    cur.close()
+    conn.close()
+    
+    if user is None:
+        raise credentials_exception
+    return dict(user)
+
+@app.post("/auth/login")
+async def login(user_data: UserLogin):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        
+        cur.execute("SELECT * FROM users WHERE username = %s", (user_data.username,))
+        user = cur.fetchone()
+        cur.close()
+        conn.close()
+        
+        if not user or not verify_password(user_data.password, user['password_hash']):
+            raise HTTPException(status_code=401, detail="Invalid credentials")
+        
+        access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+        access_token = create_access_token(
+            data={"sub": user['username']}, expires_delta=access_token_expires
+        )
+        
+        return {
+            "access_token": access_token,
+            "token_type": "bearer",
+            "user": {
+                "username": user['username'],
+                "email": user['email'],
+                "full_name": user['full_name'],
+                "role": user['role']
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/auth/profile")
+async def get_profile(current_user: dict = Depends(get_current_user)):
+    return {
+        "username": current_user['username'],
+        "email": current_user['email'],
+        "full_name": current_user['full_name'],
+        "role": current_user['role']
+    }
+
+@app.post("/auth/logout")
+async def logout():
+    return {"message": "Successfully logged out"}
+
 @app.get("/wells")
-async def get_wells():
+async def get_wells(current_user: dict = Depends(get_current_user)):
     try:
         conn = get_db_connection()
         cur = conn.cursor()
@@ -87,7 +200,8 @@ async def get_well_timeseries(
     well_id: str, 
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
-    interval: str = "1h"
+    interval: str = "1h",
+    current_user: dict = Depends(get_current_user)
 ):
     try:
         # Set default date range if not provided
@@ -144,7 +258,8 @@ async def get_well_timeseries(
 async def get_bulk_timeseries(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
-    interval: str = "1h"
+    interval: str = "1h",
+    current_user: dict = Depends(get_current_user)
 ):
     """Get timeseries data for all wells at once for fast chart switching"""
     try:
@@ -206,7 +321,7 @@ async def get_bulk_timeseries(
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/wells/{well_id}/forecast")
-async def get_well_forecast(well_id: str, days: int = 7):
+async def get_well_forecast(well_id: str, days: int = 7, current_user: dict = Depends(get_current_user)):
     try:
         conn = get_db_connection()
         cur = conn.cursor()
@@ -230,7 +345,7 @@ async def get_well_forecast(well_id: str, days: int = 7):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/alerts")
-async def get_alerts(active_only: bool = True):
+async def get_alerts(active_only: bool = True, current_user: dict = Depends(get_current_user)):
     try:
         conn = get_db_connection()
         cur = conn.cursor()
@@ -257,7 +372,7 @@ async def get_alerts(active_only: bool = True):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/dashboard/summary")
-async def get_dashboard_summary():
+async def get_dashboard_summary(current_user: dict = Depends(get_current_user)):
     try:
         # Try cache first
         cache_key = "dashboard:summary"
@@ -346,7 +461,7 @@ async def websocket_endpoint(websocket: WebSocket):
         manager.disconnect(websocket)
 
 @app.post("/cache/clear")
-async def clear_cache():
+async def clear_cache(current_user: dict = Depends(get_current_user)):
     """Clear all cached data"""
     try:
         redis_client.flushdb()
@@ -357,6 +472,81 @@ async def clear_cache():
 @app.get("/health")
 async def health_check():
     return {"status": "healthy", "service": "api"}
+
+# Device/Mobile specific endpoints
+@app.get("/mobile/wells")
+async def get_wells_mobile(current_user: dict = Depends(get_current_user)):
+    """Optimized endpoint for mobile devices with reduced data"""
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        
+        cur.execute("""
+            SELECT w.well_id, w.name, w.latitude, w.longitude,
+                   m.water_level, m.time as last_reading,
+                   CASE 
+                       WHEN m.water_level < w.critical_level THEN 'critical'
+                       WHEN m.water_level < w.warning_level THEN 'warning'
+                       ELSE 'normal'
+                   END as status
+            FROM wells w
+            LEFT JOIN LATERAL (
+                SELECT * FROM measurements_clean 
+                WHERE well_id = w.well_id 
+                ORDER BY time DESC LIMIT 1
+            ) m ON true
+            WHERE w.status = 'active'
+        """)
+        
+        wells = cur.fetchall()
+        cur.close()
+        conn.close()
+        
+        return [dict(well) for well in wells]
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/mobile/dashboard")
+async def get_mobile_dashboard(current_user: dict = Depends(get_current_user)):
+    """Simplified dashboard data for mobile"""
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        
+        cur.execute("""
+            SELECT 
+                COUNT(*) as total_wells,
+                COUNT(CASE WHEN w.status = 'active' THEN 1 END) as active_wells,
+                COUNT(CASE WHEN a.severity = 'critical' THEN 1 END) as critical_alerts,
+                COUNT(CASE WHEN a.severity = 'warning' THEN 1 END) as warning_alerts
+            FROM wells w
+            LEFT JOIN alerts a ON w.well_id = a.well_id AND a.is_active = true
+        """)
+        
+        summary = dict(cur.fetchone())
+        cur.close()
+        conn.close()
+        
+        return summary
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Error handlers
+@app.exception_handler(404)
+async def not_found_handler(request: Request, exc: HTTPException):
+    return JSONResponse(
+        status_code=404,
+        content={"detail": "Endpoint not found"}
+    )
+
+@app.exception_handler(500)
+async def internal_error_handler(request: Request, exc: Exception):
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error"}
+    )
 
 if __name__ == "__main__":
     import uvicorn

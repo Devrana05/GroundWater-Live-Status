@@ -54,11 +54,12 @@ services:
     environment:
       DATABASE_URL: postgresql://postgres:password@timescaledb:5432/groundwater
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-      MQTT_BROKER: mosquitto:1883
+      MQTT_BROKER: mosquitto
     depends_on:
       - timescaledb
       - kafka
       - mosquitto
+    restart: unless-stopped
 
   etl-service:
     build: ./services/etl
@@ -70,6 +71,7 @@ services:
       - timescaledb
       - kafka
       - redis
+    restart: unless-stopped
 
   ml-service:
     build: ./services/ml
@@ -81,6 +83,7 @@ services:
     depends_on:
       - timescaledb
       - redis
+    restart: unless-stopped
 
   api-service:
     build: ./services/api
@@ -90,10 +93,29 @@ services:
       DATABASE_URL: postgresql://postgres:password@timescaledb:5432/groundwater
       REDIS_URL: redis://redis:6379
       ML_SERVICE_URL: http://ml-service:8000
+      SECRET_KEY: your-secret-key-here
     depends_on:
       - timescaledb
       - redis
       - ml-service
+    restart: unless-stopped
+
+  # Mobile API Gateway (optimized for mobile clients)
+  mobile-api:
+    build: ./services/api
+    ports:
+      - "8003:8000"
+    environment:
+      DATABASE_URL: postgresql://postgres:password@timescaledb:5432/groundwater
+      REDIS_URL: redis://redis:6379
+      ML_SERVICE_URL: http://ml-service:8000
+      SECRET_KEY: your-secret-key-here
+      MOBILE_OPTIMIZED: "true"
+    depends_on:
+      - timescaledb
+      - redis
+      - ml-service
+    restart: unless-stopped
 
   alert-service:
     build: ./services/alerts
@@ -102,20 +124,37 @@ services:
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       SMTP_HOST: smtp.gmail.com
       SMTP_PORT: 587
+      SMTP_USER: ""
+      SMTP_PASS: ""
     depends_on:
       - timescaledb
       - kafka
+    restart: unless-stopped
 
-  # Frontend
+  # Frontend - Desktop/Web
   frontend:
     build: ./frontend
     ports:
       - "3000:3000"
     environment:
-      REACT_APP_API_URL: http://localhost:8000
-      REACT_APP_WS_URL: ws://localhost:8000
+      API_URL: http://api-service:8000
+      WS_URL: ws://api-service:8000
     depends_on:
       - api-service
+    restart: unless-stopped
+
+  # Mobile Frontend (PWA optimized)
+  mobile-frontend:
+    build: ./frontend
+    ports:
+      - "3001:3000"
+    environment:
+      API_URL: http://mobile-api:8000
+      WS_URL: ws://mobile-api:8000
+      MOBILE_MODE: "true"
+    depends_on:
+      - mobile-api
+    restart: unless-stopped
 
   # Monitoring
   prometheus:
@@ -124,15 +163,33 @@ services:
       - "9090:9090"
     volumes:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+    restart: unless-stopped
 
   grafana:
     image: grafana/grafana
     ports:
-      - "3001:3000"
+      - "3002:3000"
     environment:
       GF_SECURITY_ADMIN_PASSWORD: admin
     volumes:
       - grafana_data:/var/lib/grafana
+    restart: unless-stopped
+
+  # Load Balancer for API services
+  nginx-lb:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf
+      - ./nginx/ssl:/etc/nginx/ssl
+    depends_on:
+      - api-service
+      - mobile-api
+      - frontend
+      - mobile-frontend
+    restart: unless-stopped
 
 volumes:
   timescale_data:

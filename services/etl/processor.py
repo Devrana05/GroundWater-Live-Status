@@ -1,259 +1,235 @@
-import pandas as pd
-import numpy as np
-from kafka import KafkaConsumer
+import json
+import time
 import psycopg2
 from psycopg2.extras import RealDictCursor
-import json
-import os
+from kafka import KafkaConsumer
+import redis
+import pandas as pd
+import numpy as np
 from datetime import datetime, timedelta
-from scipy import interpolate
-import logging
+import os
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# Configuration
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:password@localhost:5432/groundwater")
+KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 
-class ETLProcessor:
-    def __init__(self):
-        self.db_url = os.getenv("DATABASE_URL", "postgresql://postgres:password@localhost:5432/groundwater")
-        self.kafka_servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
+# Initialize connections
+redis_client = redis.from_url(REDIS_URL)
+
+def get_db_connection():
+    return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+
+def validate_measurement(data):
+    """Validate and clean measurement data"""
+    try:
+        # Basic validation
+        if not all(key in data for key in ['well_id', 'timestamp', 'water_level']):
+            return None, 0.0
         
-        # Kafka consumer
-        self.consumer = KafkaConsumer(
-            'dwlr_readings',
-            bootstrap_servers=[self.kafka_servers],
-            value_deserializer=lambda x: json.loads(x.decode('utf-8')),
-            group_id='etl_processor'
-        )
+        # Range validation
+        water_level = float(data['water_level'])
+        if water_level < 0 or water_level > 100:  # Reasonable range
+            return None, 0.0
+        
+        # Battery level validation
+        battery_level = data.get('battery_level')
+        if battery_level is not None:
+            battery_level = float(battery_level)
+            if battery_level < 0 or battery_level > 100:
+                battery_level = None
+        
+        # Temperature validation
+        temperature = data.get('temperature')
+        if temperature is not None:
+            temperature = float(temperature)
+            if temperature < -50 or temperature > 80:  # Reasonable range
+                temperature = None
+        
+        cleaned_data = {
+            'well_id': data['well_id'],
+            'timestamp': data['timestamp'],
+            'water_level': water_level,
+            'battery_level': battery_level,
+            'temperature': temperature,
+            'device_status': data.get('device_status', 'online')
+        }
+        
+        # Calculate quality score based on completeness and reasonableness
+        quality_score = 0.8  # Base score
+        if battery_level is not None:
+            quality_score += 0.1
+        if temperature is not None:
+            quality_score += 0.1
+        
+        return cleaned_data, quality_score
     
-    def get_db_connection(self):
-        return psycopg2.connect(self.db_url, cursor_factory=RealDictCursor)
+    except Exception as e:
+        print(f"Validation error: {e}")
+        return None, 0.0
+
+def detect_anomalies(well_id, water_level):
+    """Simple anomaly detection using historical data"""
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        
+        # Get recent measurements for comparison
+        cur.execute("""
+            SELECT water_level 
+            FROM measurements_clean 
+            WHERE well_id = %s 
+            AND time > NOW() - INTERVAL '24 hours'
+            ORDER BY time DESC 
+            LIMIT 10
+        """, (well_id,))
+        
+        recent_levels = [row['water_level'] for row in cur.fetchall()]
+        cur.close()
+        conn.close()
+        
+        if len(recent_levels) < 3:
+            return False  # Not enough data
+        
+        # Simple statistical anomaly detection
+        mean_level = np.mean(recent_levels)
+        std_level = np.std(recent_levels)
+        
+        # Flag as anomaly if more than 2 standard deviations away
+        return abs(water_level - mean_level) > 2 * std_level
     
-    def remove_outliers(self, df, column='water_level', method='iqr', threshold=1.5):
-        """Remove outliers using IQR method"""
-        if df.empty or column not in df.columns:
-            return df
+    except Exception as e:
+        print(f"Anomaly detection error: {e}")
+        return False
+
+def process_measurement(data):
+    """Process and store cleaned measurement"""
+    try:
+        cleaned_data, quality_score = validate_measurement(data)
         
-        Q1 = df[column].quantile(0.25)
-        Q3 = df[column].quantile(0.75)
-        IQR = Q3 - Q1
+        if cleaned_data is None:
+            print(f"Invalid measurement data: {data}")
+            return False
         
-        lower_bound = Q1 - threshold * IQR
-        upper_bound = Q3 + threshold * IQR
+        # Check for anomalies
+        is_anomaly = detect_anomalies(cleaned_data['well_id'], cleaned_data['water_level'])
         
-        # Mark outliers but don't remove them completely
-        df['is_outlier'] = (df[column] < lower_bound) | (df[column] > upper_bound)
+        if is_anomaly:
+            print(f"Anomaly detected for well {cleaned_data['well_id']}: {cleaned_data['water_level']}")
+            # Could trigger alert here
         
-        return df
+        # Store in clean measurements table
+        conn = get_db_connection()
+        cur = conn.cursor()
+        
+        cur.execute("""
+            INSERT INTO measurements_clean 
+            (time, well_id, water_level, battery_level, temperature, device_status, quality_score)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """, (
+            cleaned_data['timestamp'],
+            cleaned_data['well_id'],
+            cleaned_data['water_level'],
+            cleaned_data['battery_level'],
+            cleaned_data['temperature'],
+            cleaned_data['device_status'],
+            quality_score
+        ))
+        
+        conn.commit()
+        cur.close()
+        conn.close()
+        
+        # Update cache
+        cache_key = f"latest:{cleaned_data['well_id']}"
+        redis_client.setex(cache_key, 3600, json.dumps(cleaned_data, default=str))
+        
+        print(f"Processed measurement for well {cleaned_data['well_id']}")
+        return True
     
-    def interpolate_gaps(self, df, column='water_level', max_gap_hours=6):
-        """Interpolate short gaps in data"""
-        if df.empty or column not in df.columns:
-            return df
+    except Exception as e:
+        print(f"Processing error: {e}")
+        return False
+
+def check_alert_conditions(well_id, water_level):
+    """Check if measurement triggers any alerts"""
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
         
-        df = df.sort_values('time')
-        df['time_diff'] = df['time'].diff().dt.total_seconds() / 3600  # hours
+        # Get well thresholds
+        cur.execute("""
+            SELECT critical_level, warning_level 
+            FROM wells 
+            WHERE well_id = %s
+        """, (well_id,))
         
-        # Only interpolate gaps smaller than max_gap_hours
-        mask = (df['time_diff'] <= max_gap_hours) & (df[column].isna())
+        well = cur.fetchone()
+        if not well:
+            return
         
-        if mask.any():
-            # Linear interpolation
-            df.loc[mask, column] = df[column].interpolate(method='linear')
-            df.loc[mask, 'is_interpolated'] = True
-            df.loc[mask, 'processing_notes'] = f'Interpolated gap <= {max_gap_hours}h'
-        
-        return df
-    
-    def normalize_timestamps(self, df):
-        """Normalize timestamps to consistent intervals"""
-        if df.empty:
-            return df
-        
-        # Round timestamps to nearest 15 minutes
-        df['time'] = df['time'].dt.round('15min')
-        
-        # Remove duplicates, keeping the first occurrence
-        df = df.drop_duplicates(subset=['well_id', 'time'], keep='first')
-        
-        return df
-    
-    def validate_data(self, data):
-        """Validate incoming data"""
-        required_fields = ['well_id', 'timestamp', 'water_level']
-        
-        for field in required_fields:
-            if field not in data:
-                return False, f"Missing required field: {field}"
-        
-        # Check data types and ranges
-        try:
-            water_level = float(data['water_level'])
-            if water_level < 0 or water_level > 200:  # Reasonable range
-                return False, "Water level out of reasonable range"
-        except (ValueError, TypeError):
-            return False, "Invalid water level value"
-        
-        return True, "Valid"
-    
-    def process_batch_data(self, well_id, start_time, end_time):
-        """Process historical data in batches"""
-        try:
-            conn = self.get_db_connection()
-            
-            # Fetch raw data
-            query = """
-                SELECT * FROM measurements_raw
-                WHERE well_id = %s 
-                AND time BETWEEN %s AND %s
-                ORDER BY time
-            """
-            
-            df = pd.read_sql(query, conn, params=(well_id, start_time, end_time))
-            
-            if df.empty:
-                logger.info(f"No data found for well {well_id}")
-                return
-            
-            # Convert timestamp column
-            df['time'] = pd.to_datetime(df['time'])
-            
-            # Data cleaning pipeline
-            df = self.normalize_timestamps(df)
-            df = self.remove_outliers(df)
-            df = self.interpolate_gaps(df)
-            
-            # Add processing metadata
-            df['is_interpolated'] = df.get('is_interpolated', False)
-            df['processing_notes'] = df.get('processing_notes', 'Batch processed')
-            
-            # Insert cleaned data
-            cur = conn.cursor()
-            
-            for _, row in df.iterrows():
-                cur.execute("""
-                    INSERT INTO measurements_clean 
-                    (time, well_id, water_level, battery_level, temperature, 
-                     quality_flag, is_interpolated, processing_notes)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (well_id, time) DO UPDATE SET
-                        water_level = EXCLUDED.water_level,
-                        processing_notes = EXCLUDED.processing_notes
-                """, (
-                    row['time'],
-                    row['well_id'],
-                    row['water_level'],
-                    row.get('battery_level'),
-                    row.get('temperature'),
-                    'poor' if row.get('is_outlier', False) else 'good',
-                    row.get('is_interpolated', False),
-                    row.get('processing_notes', '')
-                ))
-            
-            conn.commit()
-            cur.close()
-            conn.close()
-            
-            logger.info(f"Processed {len(df)} records for well {well_id}")
-            
-        except Exception as e:
-            logger.error(f"Batch processing error: {e}")
-    
-    def process_stream_data(self, data):
-        """Process real-time streaming data"""
-        try:
-            # Validate data
-            is_valid, message = self.validate_data(data)
-            if not is_valid:
-                logger.warning(f"Invalid data: {message}")
-                return
-            
-            conn = self.get_db_connection()
-            cur = conn.cursor()
-            
-            # Simple real-time processing
-            timestamp = pd.to_datetime(data['timestamp'])
-            
-            # Check for duplicates
+        # Check for critical level
+        if water_level <= well['critical_level']:
             cur.execute("""
-                SELECT COUNT(*) FROM measurements_clean
-                WHERE well_id = %s AND time = %s
-            """, (data['well_id'], timestamp))
-            
-            if cur.fetchone()[0] > 0:
-                logger.info(f"Duplicate data for {data['well_id']} at {timestamp}")
-                cur.close()
-                conn.close()
-                return
-            
-            # Insert cleaned data
-            cur.execute("""
-                INSERT INTO measurements_clean 
-                (time, well_id, water_level, battery_level, temperature, quality_flag)
+                INSERT INTO alerts (well_id, alert_type, severity, message, threshold_value, current_value)
                 VALUES (%s, %s, %s, %s, %s, %s)
             """, (
-                timestamp,
-                data['well_id'],
-                data['water_level'],
-                data.get('battery_level'),
-                data.get('temperature'),
-                'good'
+                well_id,
+                'critical_water_level',
+                'critical',
+                f'Water level critically low: {water_level}m',
+                well['critical_level'],
+                water_level
             ))
-            
-            conn.commit()
-            cur.close()
-            conn.close()
-            
-            logger.info(f"Processed real-time data for {data['well_id']}")
-            
-        except Exception as e:
-            logger.error(f"Stream processing error: {e}")
-    
-    def run_stream_processor(self):
-        """Run the streaming ETL processor"""
-        logger.info("Starting stream processor...")
         
-        try:
-            for message in self.consumer:
-                data = message.value
-                self.process_stream_data(data)
-                
-        except KeyboardInterrupt:
-            logger.info("Stopping stream processor...")
-        except Exception as e:
-            logger.error(f"Stream processor error: {e}")
-        finally:
-            self.consumer.close()
-    
-    def run_batch_processor(self):
-        """Run batch processing for historical data"""
-        logger.info("Starting batch processor...")
+        # Check for warning level
+        elif water_level <= well['warning_level']:
+            cur.execute("""
+                INSERT INTO alerts (well_id, alert_type, severity, message, threshold_value, current_value)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            """, (
+                well_id,
+                'low_water_level',
+                'warning',
+                f'Water level below warning threshold: {water_level}m',
+                well['warning_level'],
+                water_level
+            ))
         
+        conn.commit()
+        cur.close()
+        conn.close()
+    
+    except Exception as e:
+        print(f"Alert check error: {e}")
+
+def main():
+    """Main ETL processing loop"""
+    print("Starting ETL processor...")
+    
+    # Initialize Kafka consumer
+    consumer = KafkaConsumer(
+        'dwlr_readings',
+        bootstrap_servers=[KAFKA_BOOTSTRAP_SERVERS],
+        value_deserializer=lambda x: json.loads(x.decode('utf-8')),
+        group_id='etl_processor'
+    )
+    
+    print("Listening for messages...")
+    
+    for message in consumer:
         try:
-            conn = self.get_db_connection()
-            cur = conn.cursor()
+            data = message.value
+            print(f"Processing message: {data}")
             
-            # Get all wells
-            cur.execute("SELECT well_id FROM wells WHERE status = 'active'")
-            wells = [row[0] for row in cur.fetchall()]
-            
-            # Process last 24 hours for each well
-            end_time = datetime.now()
-            start_time = end_time - timedelta(hours=24)
-            
-            for well_id in wells:
-                self.process_batch_data(well_id, start_time, end_time)
-            
-            cur.close()
-            conn.close()
+            # Process the measurement
+            if process_measurement(data):
+                # Check for alert conditions
+                check_alert_conditions(data['well_id'], data['water_level'])
             
         except Exception as e:
-            logger.error(f"Batch processor error: {e}")
+            print(f"Message processing error: {e}")
+            continue
 
 if __name__ == "__main__":
-    processor = ETLProcessor()
-    
-    # Run batch processing first
-    processor.run_batch_processor()
-    
-    # Then start stream processing
-    processor.run_stream_processor()
+    main()

@@ -140,10 +140,22 @@ function initThemeToggle() {
     }
 }
 
+// Sidebar close button
+function initSidebarClose() {
+    const sidebar = document.getElementById('sidebar');
+    const sidebarClose = document.getElementById('sidebarClose');
+    if (sidebarClose && sidebar) {
+        sidebarClose.addEventListener('click', () => {
+            sidebar.classList.remove('open');
+        });
+    }
+}
+
 // Initialize on DOM load
 document.addEventListener('DOMContentLoaded', () => {
     initNotifications();
     initNotificationCount();
     applyNotificationState();
     initThemeToggle();
+    initSidebarClose();
 });
