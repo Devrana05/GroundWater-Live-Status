@@ -18,6 +18,9 @@ let websocket = null;
 // Chart data cache for fast switching
 let chartDataCache = {};
 
+// Summary data cache for fast switching
+let summaryDataCache = {};
+
 // Sidebar Toggle Functionality
 function initSidebarToggle() {
     sidebarToggle.addEventListener('click', (e) => {
@@ -58,15 +61,17 @@ thresholdSlider.addEventListener('input', (e) => {
 stationSelect.addEventListener('change', (e) => {
     selectedStation = e.target.value;
     updateChartForStationFast(selectedStation);
-    updateSummaryForStation(selectedStation);
+    updateSummaryForStationFast(selectedStation);
     
-    // Scroll to chart for better UX
-    const chartWidget = document.querySelector('.chart-widget');
-    if (chartWidget) {
-        chartWidget.scrollIntoView({ 
-            behavior: 'smooth', 
-            block: 'center' 
-        });
+    // Scroll to chart for better UX - mobile only
+    if (window.innerWidth <= 768) {
+        const chartWidget = document.querySelector('.chart-widget');
+        if (chartWidget) {
+            chartWidget.scrollIntoView({ 
+                behavior: 'smooth', 
+                block: 'center' 
+            });
+        }
     }
 });
 
@@ -791,8 +796,31 @@ async function preloadChartData() {
     }
 }
 
+// Fast summary update using cached data
+function updateSummaryForStationFast(stationId) {
+    // Use cached data if available
+    if (summaryDataCache[stationId]) {
+        applySummaryData(summaryDataCache[stationId]);
+        return;
+    }
+    
+    // Load and cache data if not available
+    updateSummaryForStation(stationId).then(data => {
+        if (data) {
+            summaryDataCache[stationId] = data;
+        }
+    });
+}
+
 // Update summary for selected station
 async function updateSummaryForStation(stationId) {
+    const summaryData = await loadSummaryDataOnly(stationId);
+    applySummaryData(summaryData);
+    return summaryData;
+}
+
+// Apply summary data to DOM elements
+function applySummaryData(data) {
     const summaryTitle = document.getElementById('summaryTitle');
     const currentLevel = document.getElementById('currentLevel');
     const levelChange = document.getElementById('levelChange');
@@ -801,62 +829,16 @@ async function updateSummaryForStation(stationId) {
     const lastReading = document.getElementById('lastReading');
     const deviceStatus = document.getElementById('deviceStatus');
     
-    if (stationId === 'all') {
-        summaryTitle.textContent = 'Resource Summary';
-        currentLevel.textContent = '45.2m';
-        levelChange.textContent = '+2.1%';
-        levelChange.className = 'change positive';
-        batteryLevel.textContent = '85%';
-        batteryStatus.textContent = 'Good';
-        lastReading.textContent = '2 min ago';
-        deviceStatus.textContent = 'Online';
-    } else {
-        try {
-            const response = await fetch(`${API_BASE_URL}/wells`);
-            const wells = await response.json();
-            const well = wells.find(w => w.well_id === stationId);
-            
-            if (well) {
-                summaryTitle.textContent = `Station ${stationId.slice(-3)} Summary`;
-                currentLevel.textContent = well.current_level ? `${well.current_level}m` : 'No Data';
-                batteryLevel.textContent = well.battery_level ? `${well.battery_level}%` : 'N/A';
-                
-                // Set status colors
-                if (well.current_level < 20) {
-                    levelChange.className = 'change negative';
-                    levelChange.textContent = 'Critical';
-                } else if (well.current_level < 30) {
-                    levelChange.className = 'change warning';
-                    levelChange.textContent = 'Warning';
-                } else {
-                    levelChange.className = 'change positive';
-                    levelChange.textContent = 'Normal';
-                }
-                
-                batteryStatus.textContent = well.battery_level > 20 ? 'Good' : 'Low';
-                deviceStatus.textContent = well.device_status || 'Online';
-                lastReading.textContent = well.last_reading ? 
-                    formatTimestamp(well.last_reading) : '2 min ago';
-            }
-        } catch (error) {
-            console.error('Error loading well data:', error);
-            // Use sample data
-            const sampleData = {
-                'ST001': { level: '18.5m', battery: '85%', status: 'Critical' },
-                'ST002': { level: '42.1m', battery: '92%', status: 'Normal' },
-                'ST003': { level: 'No Data', battery: '78%', status: 'Warning' }
-            };
-            
-            const data = sampleData[stationId];
-            if (data) {
-                summaryTitle.textContent = `Station ${stationId.slice(-3)} Summary`;
-                currentLevel.textContent = data.level;
-                batteryLevel.textContent = data.battery;
-                levelChange.textContent = data.status;
-                levelChange.className = `change ${data.status.toLowerCase()}`;
-            }
-        }
+    if (summaryTitle) summaryTitle.textContent = data.title;
+    if (currentLevel) currentLevel.textContent = data.level;
+    if (levelChange) {
+        levelChange.textContent = data.change;
+        levelChange.className = data.changeClass;
     }
+    if (batteryLevel) batteryLevel.textContent = data.battery;
+    if (batteryStatus) batteryStatus.textContent = data.batteryStatus;
+    if (lastReading) lastReading.textContent = data.lastReading;
+    if (deviceStatus) deviceStatus.textContent = data.deviceStatus;
 }
 
 // Theme toggle functionality
@@ -933,6 +915,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Preload chart data for fast switching
     await preloadChartData();
     
+    // Preload summary data silently in background
+    preloadSummaryData(); // Don't await - run in background
+    
     initTableInteractions();
     initExportButtons();
     initAlertInteractions();
@@ -983,6 +968,94 @@ function navigateToAlert(alertId) {
     localStorage.setItem('highlightAlert', alertId);
     // Navigate to alerts page
     window.location.href = 'alerts.html';
+}
+
+// Preload summary data for all stations (silently in background)
+async function preloadSummaryData() {
+    const stations = ['all', 'ST001', 'ST002', 'ST003'];
+    for (const stationId of stations) {
+        try {
+            const summaryData = await loadSummaryDataOnly(stationId);
+            if (summaryData) {
+                summaryDataCache[stationId] = summaryData;
+            }
+        } catch (error) {
+            console.error(`Failed to preload summary for ${stationId}:`, error);
+        }
+    }
+}
+
+// Load summary data without applying to DOM
+async function loadSummaryDataOnly(stationId) {
+    const summaryData = {
+        title: '',
+        level: '',
+        change: '',
+        changeClass: '',
+        battery: '',
+        batteryStatus: '',
+        lastReading: '',
+        deviceStatus: ''
+    };
+    
+    if (stationId === 'all') {
+        summaryData.title = 'Resource Summary';
+        summaryData.level = '45.2m';
+        summaryData.change = '+2.1%';
+        summaryData.changeClass = 'change positive';
+        summaryData.battery = '85%';
+        summaryData.batteryStatus = 'Good';
+        summaryData.lastReading = '2 min ago';
+        summaryData.deviceStatus = 'Online';
+    } else {
+        try {
+            const response = await fetch(`${API_BASE_URL}/wells`);
+            const wells = await response.json();
+            const well = wells.find(w => w.well_id === stationId);
+            
+            if (well) {
+                summaryData.title = `Station ${stationId.slice(-3)} Summary`;
+                summaryData.level = well.current_level ? `${well.current_level}m` : 'No Data';
+                summaryData.battery = well.battery_level ? `${well.battery_level}%` : 'N/A';
+                
+                if (well.current_level < 20) {
+                    summaryData.changeClass = 'change negative';
+                    summaryData.change = 'Critical';
+                } else if (well.current_level < 30) {
+                    summaryData.changeClass = 'change warning';
+                    summaryData.change = 'Warning';
+                } else {
+                    summaryData.changeClass = 'change positive';
+                    summaryData.change = 'Normal';
+                }
+                
+                summaryData.batteryStatus = well.battery_level > 20 ? 'Good' : 'Low';
+                summaryData.deviceStatus = well.device_status || 'Online';
+                summaryData.lastReading = well.last_reading ? 
+                    formatTimestamp(well.last_reading) : '2 min ago';
+            }
+        } catch (error) {
+            const sampleData = {
+                'ST001': { level: '18.5m', battery: '85%', status: 'Critical', statusClass: 'negative' },
+                'ST002': { level: '42.1m', battery: '92%', status: 'Normal', statusClass: 'positive' },
+                'ST003': { level: 'No Data', battery: '78%', status: 'Warning', statusClass: 'warning' }
+            };
+            
+            const data = sampleData[stationId];
+            if (data) {
+                summaryData.title = `Station ${stationId.slice(-3)} Summary`;
+                summaryData.level = data.level;
+                summaryData.battery = data.battery;
+                summaryData.change = data.status;
+                summaryData.changeClass = `change ${data.statusClass}`;
+                summaryData.batteryStatus = 'Good';
+                summaryData.deviceStatus = 'Online';
+                summaryData.lastReading = '2 min ago';
+            }
+        }
+    }
+    
+    return summaryData;
 }
 
 // Make functions globally available
