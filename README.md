@@ -11,7 +11,7 @@ A complete end-to-end solution for real-time groundwater resource evaluation usi
 
 ### 1. Clone Repository
 ```bash
-git clone <repository-url>
+git clone https://github.com/Devrana05/GroundWater-Live-Status SIH
 cd SIH
 ```
 
@@ -97,6 +97,7 @@ SIH/
 ├── alerts.html          # Alerts management page
 ├── stations.html        # Stations monitoring page
 ├── data-explorer.html   # Data exploration page
+├── login.html           # Login page
 ├── styles.css           # Main stylesheet with theme support
 ├── script.js            # Dashboard JavaScript
 ├── alerts.js            # Alerts page JavaScript with filtering
