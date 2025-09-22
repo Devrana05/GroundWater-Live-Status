@@ -11,8 +11,8 @@ A complete end-to-end solution for real-time groundwater resource evaluation usi
 
 ### 1. Clone Repository
 ```bash
-git clone <repository-url>
-cd SIH
+git clone https://github.com/your-username/groundwater-monitoring-system.git
+cd groundwater-monitoring-system
 ```
 
 ### 2. Full Stack Deployment (Recommended)
@@ -136,10 +136,12 @@ SIH/
 
 ## 🎯 Pages
 
-1. **Dashboard** (`index.html`) - Overview with maps and charts
-2. **Data Explorer** (`data-explorer.html`) - Filterable data tables with station/status selectors
-3. **Alerts** (`alerts.html`) - Alert management with filtering and cross-page notifications
-4. **Stations** (`stations.html`) - Station monitoring with real-time status updates
+1. **Login** (`login.html`) - Authentication page with modern gradient design
+2. **Dashboard** (`index.html`) - Overview with maps and charts
+3. **Data Explorer** (`data-explorer.html`) - Filterable data tables with station/status selectors
+4. **Alerts** (`alerts.html`) - Alert management with filtering and cross-page notifications
+5. **Stations** (`stations.html`) - Station monitoring with real-time status updates
+6. **Forecasting** (`forecasting.html`) - ML-powered groundwater level predictions
 
 ## 📚 API Endpoints
 
@@ -220,9 +222,12 @@ cd services/ingest && python main.py
 - **Grafana Monitoring**: http://localhost:3002 (admin/admin)
 - **Prometheus Metrics**: http://localhost:9090
 
-## 👤 Default Login
-- **Username**: admin
-- **Password**: admin123
+## 👤 Authentication
+- **Login Page**: `login.html` - Modern authentication interface
+- **Default Credentials**:
+  - **Username**: admin
+  - **Password**: admin123
+- **Features**: Automatic redirection, session management, logout functionality
 
 ## 📄 License
 
