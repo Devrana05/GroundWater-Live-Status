@@ -15,16 +15,36 @@ const WS_URL = 'ws://localhost:8000/ws';
 // WebSocket connection
 let websocket = null;
 
+// Chart data cache for fast switching
+let chartDataCache = {};
+
 // Sidebar Toggle Functionality
 function initSidebarToggle() {
     if (window.innerWidth > 768) {
-        sidebarToggle.addEventListener('click', () => {
+        sidebarToggle.addEventListener('click', (e) => {
+            e.stopPropagation();
             sidebar.classList.toggle('collapsed');
         });
     }
 }
 
+// Prevent sidebar expansion on nav link clicks when collapsed
+function initNavLinks() {
+    const navLinks = document.querySelectorAll('.nav-link');
+    navLinks.forEach(link => {
+        link.addEventListener('click', (e) => {
+            if (sidebar.classList.contains('collapsed') && window.innerWidth > 768) {
+                e.stopPropagation();
+                setTimeout(() => {
+                    window.location.href = link.href;
+                }, 0);
+            }
+        });
+    });
+}
+
 initSidebarToggle();
+initNavLinks();
 
 // Threshold Slider
 thresholdSlider.addEventListener('input', (e) => {
@@ -34,7 +54,7 @@ thresholdSlider.addEventListener('input', (e) => {
 // Station Selection
 stationSelect.addEventListener('change', (e) => {
     selectedStation = e.target.value;
-    updateChartForStation(selectedStation);
+    updateChartForStationFast(selectedStation);
     updateSummaryForStation(selectedStation);
 });
 
@@ -567,25 +587,55 @@ function initAlertInteractions() {
 }
 
 // Notification interactions
+let notificationListenersAdded = false;
+
 function initNotifications() {
     const notificationBtn = document.getElementById('notificationBtn');
     const notificationPopup = document.getElementById('notificationPopup');
     const closePopup = document.getElementById('closePopup');
     
-    notificationBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        notificationPopup.classList.toggle('show');
-    });
-    
-    closePopup.addEventListener('click', () => {
-        notificationPopup.classList.remove('show');
-    });
-    
-    document.addEventListener('click', (e) => {
-        if (!notificationPopup.contains(e.target) && !notificationBtn.contains(e.target)) {
-            notificationPopup.classList.remove('show');
+    if (notificationBtn && notificationPopup && !notificationListenersAdded) {
+        notificationBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            notificationPopup.classList.toggle('show');
+        });
+        
+        if (closePopup) {
+            closePopup.addEventListener('click', () => {
+                notificationPopup.classList.remove('show');
+            });
         }
-    });
+        
+        document.addEventListener('click', (e) => {
+            if (!notificationPopup.contains(e.target) && !notificationBtn.contains(e.target)) {
+                notificationPopup.classList.remove('show');
+            }
+        });
+        
+        notificationListenersAdded = true;
+    }
+}
+
+// Clear all notifications function
+function clearAllNotifications() {
+    const notificationBadge = document.querySelector('.notification-badge');
+    const popupContent = document.querySelector('.popup-content');
+    
+    if (notificationBadge) {
+        notificationBadge.textContent = '0';
+        notificationBadge.style.display = 'none';
+    }
+    
+    if (popupContent) {
+        popupContent.innerHTML = '<p style="text-align: center; color: #757575; padding: 20px;">No active alerts</p>';
+    }
+    
+    localStorage.setItem('notificationsCleared', 'true');
+    
+    const notificationPopup = document.getElementById('notificationPopup');
+    if (notificationPopup) {
+        notificationPopup.classList.remove('show');
+    }
 }
 
 // Resize handler
@@ -625,21 +675,105 @@ async function loadAlerts() {
     }
 }
 
-// Update chart for selected station
-async function updateChartForStation(stationId) {
+// Fast chart update using cached data
+function updateChartForStationFast(stationId) {
     if (!trendChart) return;
     
-    const chartData = await loadChartData(stationId);
+    // Use cached data if available
+    if (chartDataCache[stationId]) {
+        trendChart.data = chartDataCache[stationId];
+        trendChart.update();
+        updateChartTitle(stationId);
+        return;
+    }
     
-    trendChart.data = chartData;
-    trendChart.update();
-    
-    // Update chart title
+    // Load and cache data if not available
+    loadChartData(stationId).then(chartData => {
+        chartDataCache[stationId] = chartData;
+        trendChart.data = chartData;
+        trendChart.update();
+        updateChartTitle(stationId);
+    });
+}
+
+// Update chart title
+function updateChartTitle(stationId) {
     const chartTitle = document.getElementById('chartTitle');
     if (chartTitle) {
         chartTitle.textContent = stationId === 'all' ? 
             'Water Level Trends - All Stations' : 
             `Water Level Trends - Station ${stationId.slice(-3)}`;
+    }
+}
+
+// Preload all chart data for instant switching
+async function preloadChartData() {
+    try {
+        // Try bulk endpoint first for faster loading
+        const response = await fetch(`${API_BASE_URL}/wells/timeseries/bulk?interval=1h`);
+        if (response.ok) {
+            const bulkData = await response.json();
+            
+            // Process bulk data into chart format
+            const stations = ['ST001', 'ST002', 'ST003'];
+            const labels = [];
+            const allStationData = [];
+            
+            // Create labels from first station
+            if (bulkData['ST001'] && bulkData['ST001'].length > 0) {
+                labels.push(...bulkData['ST001'].map(d => 
+                    new Date(d.bucket).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
+                ));
+            }
+            
+            // Create datasets for each station
+            stations.forEach(stationId => {
+                if (bulkData[stationId]) {
+                    const data = bulkData[stationId].map(d => d.avg_level);
+                    chartDataCache[stationId] = {
+                        labels: labels,
+                        datasets: [{
+                            label: `Station ${stationId.slice(-3)}`,
+                            data: data,
+                            borderColor: getWellColor(stationId),
+                            backgroundColor: getWellColor(stationId, 0.1),
+                            borderWidth: 2,
+                            fill: false,
+                            tension: 0.4
+                        }]
+                    };
+                    allStationData.push({
+                        label: `Station ${stationId.slice(-3)}`,
+                        data: data,
+                        borderColor: getWellColor(stationId),
+                        backgroundColor: getWellColor(stationId, 0.1),
+                        borderWidth: 2,
+                        fill: false,
+                        tension: 0.4
+                    });
+                }
+            });
+            
+            // Create 'all' stations view
+            chartDataCache['all'] = {
+                labels: labels,
+                datasets: allStationData
+            };
+            
+            return; // Success, exit early
+        }
+    } catch (error) {
+        console.log('Bulk endpoint failed, falling back to individual requests:', error);
+    }
+    
+    // Fallback to individual requests
+    const stations = ['all', 'ST001', 'ST002', 'ST003'];
+    for (const stationId of stations) {
+        try {
+            chartDataCache[stationId] = await loadChartData(stationId);
+        } catch (error) {
+            console.error(`Failed to preload data for ${stationId}:`, error);
+        }
     }
 }
 
@@ -781,6 +915,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     initThemeToggle();
     await initMap();
     await initChart();
+    
+    // Preload chart data for fast switching
+    await preloadChartData();
+    
     initTableInteractions();
     initExportButtons();
     initAlertInteractions();
@@ -832,6 +970,10 @@ function navigateToAlert(alertId) {
     // Navigate to alerts page
     window.location.href = 'alerts.html';
 }
+
+// Make functions globally available
+window.clearAllNotifications = clearAllNotifications;
+window.navigateToAlert = navigateToAlert;
 
 // Utility functions
 function formatTimestamp(timestamp) {

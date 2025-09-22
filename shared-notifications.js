@@ -1,24 +1,30 @@
 // Shared notification functionality for all pages
+let sharedNotificationListenersAdded = false;
+
 function initNotifications() {
     const notificationBtn = document.getElementById('notificationBtn');
     const notificationPopup = document.getElementById('notificationPopup');
     const closePopup = document.getElementById('closePopup');
     
-    if (notificationBtn && notificationPopup && closePopup) {
+    if (notificationBtn && notificationPopup && !sharedNotificationListenersAdded) {
         notificationBtn.addEventListener('click', (e) => {
             e.stopPropagation();
             notificationPopup.classList.toggle('show');
         });
         
-        closePopup.addEventListener('click', () => {
-            notificationPopup.classList.remove('show');
-        });
+        if (closePopup) {
+            closePopup.addEventListener('click', () => {
+                notificationPopup.classList.remove('show');
+            });
+        }
         
         document.addEventListener('click', (e) => {
             if (!notificationPopup.contains(e.target) && !notificationBtn.contains(e.target)) {
                 notificationPopup.classList.remove('show');
             }
         });
+        
+        sharedNotificationListenersAdded = true;
     }
 }
 
@@ -56,18 +62,29 @@ function initNotificationCount() {
 
 // Clear all notifications
 function clearAllNotifications() {
-    // Store cleared state in localStorage
+    const notificationBadge = document.querySelector('.notification-badge');
+    const popupContent = document.querySelector('.popup-content');
+    
+    if (notificationBadge) {
+        notificationBadge.textContent = '0';
+        notificationBadge.style.display = 'none';
+    }
+    
+    if (popupContent) {
+        popupContent.innerHTML = '<p style="text-align: center; color: #757575; padding: 20px;">No active alerts</p>';
+    }
+    
     localStorage.setItem('notificationsCleared', 'true');
     
-    // Apply cleared state to current page
-    applyNotificationState();
-    
-    // Close popup
-    const popup = document.getElementById('notificationPopup');
-    if (popup) {
-        popup.classList.remove('show');
+    const notificationPopup = document.getElementById('notificationPopup');
+    if (notificationPopup) {
+        notificationPopup.classList.remove('show');
     }
 }
+
+// Make functions globally available
+window.clearAllNotifications = clearAllNotifications;
+window.navigateToAlert = navigateToAlert;
 
 // Apply notification cleared state
 function applyNotificationState() {

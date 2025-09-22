@@ -171,7 +171,7 @@ python test_data_generator.py
 ## 🚀 Getting Started
 
 1. **Frontend Only** - Open `index.html` in any modern web browser
-2. **With Backend** - Run `python -m http.server 8080` and visit `http://localhost:8080`
+2. **With Backend** - Run `python -m http.server 8080` and visit `http://localhost:80respons80`
 3. **Full Stack** - Use `docker-compose up -d` to start all services
 
 ## 📄 License

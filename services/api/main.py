@@ -96,6 +96,17 @@ async def get_well_timeseries(
         if not start_date:
             start_date = (datetime.now() - timedelta(days=7)).isoformat()
         
+        # Create cache key
+        cache_key = f"timeseries:{well_id}:{start_date}:{end_date}:{interval}"
+        
+        # Try to get from cache first
+        try:
+            cached_data = redis_client.get(cache_key)
+            if cached_data:
+                return json.loads(cached_data)
+        except:
+            pass  # Continue to database if cache fails
+        
         conn = get_db_connection()
         cur = conn.cursor()
         
@@ -114,11 +125,82 @@ async def get_well_timeseries(
             ORDER BY bucket
         """, (interval, well_id, start_date, end_date))
         
-        data = cur.fetchall()
+        data = [dict(row) for row in cur.fetchall()]
         cur.close()
         conn.close()
         
-        return [dict(row) for row in data]
+        # Cache the result for 5 minutes
+        try:
+            redis_client.setex(cache_key, 300, json.dumps(data, default=str))
+        except:
+            pass  # Continue even if caching fails
+        
+        return data
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/wells/timeseries/bulk")
+async def get_bulk_timeseries(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    interval: str = "1h"
+):
+    """Get timeseries data for all wells at once for fast chart switching"""
+    try:
+        # Set default date range
+        if not end_date:
+            end_date = datetime.now().isoformat()
+        if not start_date:
+            start_date = (datetime.now() - timedelta(days=1)).isoformat()
+        
+        cache_key = f"bulk_timeseries:{start_date}:{end_date}:{interval}"
+        
+        # Try cache first
+        try:
+            cached_data = redis_client.get(cache_key)
+            if cached_data:
+                return json.loads(cached_data)
+        except:
+            pass
+        
+        conn = get_db_connection()
+        cur = conn.cursor()
+        
+        # Get data for all wells
+        cur.execute("""
+            SELECT 
+                well_id,
+                time_bucket(%s, time) as bucket,
+                AVG(water_level) as avg_level
+            FROM measurements_clean
+            WHERE time BETWEEN %s AND %s
+            GROUP BY well_id, bucket
+            ORDER BY well_id, bucket
+        """, (interval, start_date, end_date))
+        
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+        
+        # Group by well_id
+        result = {}
+        for row in rows:
+            well_id = row['well_id']
+            if well_id not in result:
+                result[well_id] = []
+            result[well_id].append({
+                'bucket': row['bucket'],
+                'avg_level': row['avg_level']
+            })
+        
+        # Cache for 5 minutes
+        try:
+            redis_client.setex(cache_key, 300, json.dumps(result, default=str))
+        except:
+            pass
+        
+        return result
     
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -177,6 +259,15 @@ async def get_alerts(active_only: bool = True):
 @app.get("/dashboard/summary")
 async def get_dashboard_summary():
     try:
+        # Try cache first
+        cache_key = "dashboard:summary"
+        try:
+            cached_summary = redis_client.get(cache_key)
+            if cached_summary:
+                return json.loads(cached_summary)
+        except:
+            pass
+        
         conn = get_db_connection()
         cur = conn.cursor()
         
@@ -210,6 +301,12 @@ async def get_dashboard_summary():
         summary = dict(cur.fetchone())
         cur.close()
         conn.close()
+        
+        # Cache for 2 minutes
+        try:
+            redis_client.setex(cache_key, 120, json.dumps(summary, default=str))
+        except:
+            pass
         
         return summary
     
@@ -247,6 +344,15 @@ async def websocket_endpoint(websocket: WebSocket):
             
     except WebSocketDisconnect:
         manager.disconnect(websocket)
+
+@app.post("/cache/clear")
+async def clear_cache():
+    """Clear all cached data"""
+    try:
+        redis_client.flushdb()
+        return {"status": "cache cleared"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/health")
 async def health_check():
