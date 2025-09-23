@@ -292,15 +292,15 @@
                     labels: ['Sep 23', 'Sep 24', 'Sep 25', 'Sep 26', 'Sep 27', 'Sep 28', 'Sep 29', 'Sep 30', 'Oct 1', 'Oct 2', 'Oct 3'],
                     datasets: [{
                         label: 'Historical',
-                        data: [42.1, 42.8, 43.2, 43.9, 44.5, 45.2, null, null, null, null, null],
-                        borderColor: 'var(--primary-color)',
+                        data: [38.1, 38.8, 39.2, 39.9, 40.5, 41.2, null, null, null, null, null],
+                        borderColor: '#006C86',
                         backgroundColor: 'transparent',
                         borderWidth: 2,
                         pointRadius: 4
                     }, {
                         label: 'Forecast',
-                        data: [null, null, null, null, null, 45.2, 45.8, 46.2, 46.8, 47.1, 47.8],
-                        borderColor: 'var(--warning-color)',
+                        data: [null, null, null, null, null, null, 41.8, 42.2, 42.8, 43.1, 43.8],
+                        borderColor: '#FBC02D',
                         backgroundColor: 'rgba(255, 193, 7, 0.1)',
                         borderWidth: 2,
                         borderDash: [5, 5],
@@ -336,6 +336,9 @@
             document.getElementById('forecastPeriod').addEventListener('change', updateForecast);
             document.getElementById('modelSelect').addEventListener('change', updateForecast);
             
+            // Initialize with default station data
+            updateForecast();
+            
             // Profile functionality
             const profileBtn = document.getElementById('profileBtn');
             const profilePopup = document.getElementById('profilePopup');
@@ -356,9 +359,41 @@
         });
 
         function updateForecast() {
-            // Simulate forecast update
-            const accuracy = Math.random() * 5 + 90;
-            document.getElementById('modelAccuracy').textContent = accuracy.toFixed(1) + '%';
+            const station = document.getElementById('stationSelect').value;
+            const period = document.getElementById('forecastPeriod').value;
+            const model = document.getElementById('modelSelect').value;
+            
+            // Update chart data based on station
+            const stationData = {
+                ST001: {
+                    historical: [38.1, 38.8, 39.2, 39.9, 40.5, 41.2],
+                    forecast: [41.8, 42.2, 42.8, 43.1, 43.8]
+                },
+                ST002: {
+                    historical: [45.1, 45.8, 46.2, 46.9, 47.5, 48.2],
+                    forecast: [48.8, 49.2, 49.8, 50.1, 50.8]
+                },
+                ST003: {
+                    historical: [52.1, 52.8, 53.2, 53.9, 54.5, 55.2],
+                    forecast: [55.8, 56.2, 56.8, 57.1, 57.8]
+                }
+            };
+            
+            const data = stationData[station] || stationData.ST001;
+            
+            forecastChart.data.datasets[0].data = [...data.historical, data.historical[data.historical.length - 1], null, null, null, null, null];
+            forecastChart.data.datasets[1].data = [null, null, null, null, null, data.historical[data.historical.length - 1], ...data.forecast];
+            
+            forecastChart.update();
+            
+            // Update accuracy based on model
+            const modelAccuracy = {
+                rf: Math.random() * 3 + 92,
+                lstm: Math.random() * 4 + 88,
+                arima: Math.random() * 5 + 85
+            };
+            
+            document.getElementById('modelAccuracy').textContent = modelAccuracy[model].toFixed(1) + '%';
         }
     </script>
 </body>
