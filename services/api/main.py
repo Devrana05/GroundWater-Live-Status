@@ -607,6 +607,12 @@ async def internal_error_handler(request: Request, exc: Exception):
         content={"detail": "Internal server error"}
     )
 
+# Vercel handler function
+def handler(event, context):
+    import mangum
+    handler = mangum.Mangum(app)
+    return handler(event, context)
+
 # Create app instance for deployment
 app_instance = app
 
