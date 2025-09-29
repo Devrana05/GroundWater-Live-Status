@@ -3,7 +3,7 @@ echo Starting Groundwater Monitoring System...
 
 REM Start FastAPI backend
 echo Starting API server...
-start "API Server" cmd /k "cd services\api && python -m pip install fastapi uvicorn --quiet && uvicorn main:app --host 0.0.0.0 --port 8000"
+start "API Server" cmd /k "cd services\api && pip install -r requirements.txt --quiet && python main.py"
 
 REM Wait for API to start
 timeout /t 3 /nobreak >nul
