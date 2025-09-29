@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <script>
+        const theme=localStorage.getItem('theme')||'light';
+        if(theme==='dark')document.documentElement.className='dark-theme';
+        localStorage.setItem('theme',theme);
+    </script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Groundwater Real-Time Dashboard</title>
+    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+    <script src="theme-init.js"></script>
+    <script src="api.js"></script>
+</head>
+<body>
+    <!-- Header -->
+    <header class="header">
+        <div class="header-left">
+            <button class="sidebar-toggle" id="sidebarToggle">
+                <i class="fas fa-bars"></i>
+            </button>
+            <div class="logo">
+                <i class="fas fa-tint"></i>
+                <h1>Groundwater Real-Time Dashboard</h1>
+            </div>
+        </div>
+        <div class="header-right">
+            <button class="notification-btn" id="notificationBtn">
+                <i class="fas fa-bell"></i>
+                <span class="notification-badge">2</span>
+                <script>
+                    const isCleared=localStorage.getItem('notificationsCleared')==='true';
+                    const badge=document.querySelector('.notification-badge');
+                    if(isCleared){badge.textContent='0';badge.style.display='none';}
+                </script>
+            </button>
+            <div class="notification-popup" id="notificationPopup">
+                <div class="popup-header">
+                    <h4>Active Alerts</h4>
+                    <button class="close-btn" id="closePopup"><i class="fas fa-times"></i></button>
+                </div>
+                <div class="popup-content">
+                    <div class="popup-alert critical" data-alert-id="ST001-critical" onclick="navigateToAlert('ST001-critical')">
+                        <i class="fas fa-exclamation-circle"></i>
+                        <div>
+                            <h5>ST001 - Critical Water Level</h5>
+                            <p>15.2m below threshold</p>
+                            <span>2 min ago</span>
+                        </div>
+                    </div>
+                    <div class="popup-alert warning" data-alert-id="ST002-warning" onclick="navigateToAlert('ST002-warning')">
+                        <i class="fas fa-exclamation-triangle"></i>
+                        <div>
+                            <h5>ST002 - Low Battery</h5>
+                            <p>Battery at 18%</p>
+                            <span>1 hour ago</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="popup-footer">
+                    <button class="clear-all-btn" onclick="clearAllNotifications()">Clear All</button>
+                    <a href="alerts.html" class="view-all-btn">View All Alerts</a>
+                </div>
+            </div>
+            <div class="theme-toggle">
+                <input type="checkbox" id="themeToggle" class="theme-checkbox">
+                <label for="themeToggle" class="theme-label">
+                    <i class="fas fa-sun"></i>
+                    <i class="fas fa-moon"></i>
+                    <span class="theme-slider"></span>
+                </label>
+                <script>document.getElementById('themeToggle').checked=localStorage.getItem('theme')==='dark';</script>
+            </div>
+            <button class="profile-btn" id="profileBtn">
+                <i class="fas fa-user-circle"></i>
+            </button>
+            <div class="profile-popup" id="profilePopup">
+                <div class="profile-section">
+                    <div class="profile-info">
+                        <i class="fas fa-user-circle profile-avatar"></i>
+                        <div>
+                            <h4>John Doe</h4>
+                            <p>Administrator</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="profile-menu">
+                    <button class="profile-menu-item" id="profileSettings">
+                        <i class="fas fa-cog"></i>
+                        <span>Profile Settings</span>
+                    </button>
+                    <button class="profile-menu-item logout" id="logoutBtn">
+                        <i class="fas fa-sign-out-alt"></i>
+                        <span>Logout</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Sidebar -->
+    <nav class="sidebar" id="sidebar">
+        <button class="sidebar-close" id="sidebarClose" style="display: none;">
+            <i class="fas fa-times"></i>
+        </button>
+        <ul class="nav-menu">
+            <li class="nav-item active">
+                <a href="index.html" class="nav-link">
+                    <i class="fas fa-chart-line"></i>
+                    <span>Dashboard</span>
+                </a>
+            </li>
+            <li class="nav-item">
+                <a href="data-explorer.html" class="nav-link">
+                    <i class="fas fa-database"></i>
+                    <span>Data Explorer</span>
+                </a>
+            </li>
+            <li class="nav-item">
+                <a href="alerts.html" class="nav-link">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <span>Alerts</span>
+                </a>
+            </li>
+            <li class="nav-item">
+                <a href="stations.html" class="nav-link">
+                    <i class="fas fa-broadcast-tower"></i>
+                    <span>Stations</span>
+                </a>
+            </li>
+            <li class="nav-item">
+                <a href="forecasting.html" class="nav-link">
+                    <i class="fas fa-chart-area"></i>
+                    <span>Forecasting</span>
+                </a>
+            </li>
+        </ul>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="main-content">
+        <!-- Filter Bar -->
+        <div class="filter-bar">
+            <div class="filter-group">
+                <label>Date Range:</label>
+                <input type="date" id="startDate" value="2024-01-01">
+                <input type="date" id="endDate" value="2024-01-31">
+            </div>
+            <div class="filter-group">
+                <label>Station:</label>
+                <select id="stationSelect">
+                    <option value="all">All Stations</option>
+                    <option value="ST001">Station 001</option>
+                    <option value="ST002">Station 002</option>
+                    <option value="ST003">Station 003</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label>Alert Threshold:</label>
+                <input type="range" id="thresholdSlider" min="0" max="100" value="75">
+                <span id="thresholdValue">75m</span>
+            </div>
+        </div>
+
+        <!-- Dashboard Grid -->
+        <div class="dashboard-grid">
+            <!-- Map Widget -->
+            <div class="widget map-widget">
+                <div class="widget-header">
+                    <h3><i class="fas fa-map-marker-alt"></i> Station Locations</h3>
+                    <div class="live-indicator">
+                        <i class="fas fa-circle"></i> Live
+                    </div>
+                </div>
+                <div id="map" class="map-container"></div>
+            </div>
+
+            <!-- Resource Summary -->
+            <div class="widget summary-widget">
+                <div class="widget-header">
+                    <h3><i class="fas fa-tachometer-alt"></i> <span id="summaryTitle">Resource Summary</span></h3>
+                </div>
+                <div class="summary-cards">
+                    <div class="summary-card">
+                        <div class="card-icon">
+                            <i class="fas fa-water"></i>
+                        </div>
+                        <div class="card-content">
+                            <h4>Current Level</h4>
+                            <span class="metric" id="currentLevel">45.2m</span>
+                            <span class="change positive" id="levelChange">+2.1%</span>
+                        </div>
+                    </div>
+                    <div class="summary-card">
+                        <div class="card-icon">
+                            <i class="fas fa-battery-three-quarters"></i>
+                        </div>
+                        <div class="card-content">
+                            <h4>Battery Level</h4>
+                            <span class="metric" id="batteryLevel">85%</span>
+                            <span class="change normal" id="batteryStatus">Good</span>
+                        </div>
+                    </div>
+                    <div class="summary-card">
+                        <div class="card-icon">
+                            <i class="fas fa-clock"></i>
+                        </div>
+                        <div class="card-content">
+                            <h4>Last Reading</h4>
+                            <span class="metric" id="lastReading">2 min ago</span>
+                            <span class="change normal" id="deviceStatus">Online</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Chart Widget -->
+            <div class="widget chart-widget">
+                <div class="widget-header">
+                    <h3><i class="fas fa-chart-line"></i> <span id="chartTitle">Water Level Trends - All Stations</span></h3>
+                    <button class="export-btn">
+                        <i class="fas fa-download"></i>
+                    </button>
+                </div>
+                <div class="chart-container">
+                    <canvas id="trendChart"></canvas>
+                </div>
+            </div>
+
+            <!-- Alerts Panel -->
+            <div class="widget alerts-widget">
+                <div class="widget-header">
+                    <h3><i class="fas fa-exclamation-triangle"></i> Active Alerts</h3>
+                    <!-- <span class="alert-count">2</span> -->
+                </div>
+                <div class="alerts-content">
+                    <div class="alerts-stations">
+                        <div class="alert-cell critical"><i class="fas fa-exclamation-circle"></i><span>ST001</span></div>
+                        <div class="alert-cell warning"><i class="fas fa-exclamation-triangle"></i><span>ST002</span></div>
+                        <div class="alert-cell normal"><i class="fas fa-check-circle"></i><span>ST003</span></div>
+                    </div>
+                    <div class="alerts-details">
+                        <div class="alert-item critical">
+                            <div class="alert-icon"><i class="fas fa-exclamation-circle"></i></div>
+                            <div class="alert-content">
+                                <h5>ST001 - Critical Water Level</h5>
+                                <p>15.2m below threshold</p>
+                                <span class="alert-time">2 min ago</span>
+                            </div>
+                        </div>
+                        <div class="alert-item warning">
+                            <div class="alert-icon"><i class="fas fa-exclamation-triangle"></i></div>
+                            <div class="alert-content">
+                                <h5>ST002 - Low Battery</h5>
+                                <p>Battery at 18%</p>
+                                <span class="alert-time">1 hour ago</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="alerts-summary">
+                        <h4>Alert Summary</h4>
+                        <div class="summary-stats">
+                            <div class="stat critical"><span class="count">1</span><span class="label">Critical</span></div>
+                            <div class="stat warning"><span class="count">1</span><span class="label">Warning</span></div>
+                            <div class="stat normal"><span class="count">1</span><span class="label">Normal</span></div>
+                        </div>
+                        <div class="summary-info">
+                            <p><strong>Response Time:</strong> 12 min avg</p>
+                            <p><strong>Last Update:</strong> 2 min ago</p>
+                            <p><strong>Total Stations:</strong> 3 monitored</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Data Table -->
+            <div class="widget table-widget">
+                <div class="widget-header">
+                    <h3><i class="fas fa-table"></i> Recent Readings</h3>
+                    <button class="export-btn">
+                        <i class="fas fa-file-csv"></i> Export CSV
+                    </button>
+                </div>
+                <div class="table-container">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Station</th>
+                                <th>Timestamp</th>
+                                <th>Depth (m)</th>
+                                <th>Quality</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>ST001</td>
+                                <td>2024-01-15 14:30:00</td>
+                                <td>18.5</td>
+                                <td><span class="quality-flag good">Good</span></td>
+                                <td><span class="status critical">Critical</span></td>
+                            </tr>
+                            <tr>
+                                <td>ST002</td>
+                                <td>2024-01-15 14:29:45</td>
+                                <td>42.1</td>
+                                <td><span class="quality-flag good">Good</span></td>
+                                <td><span class="status normal">Normal</span></td>
+                            </tr>
+                            <tr>
+                                <td>ST003</td>
+                                <td>2024-01-15 14:00:12</td>
+                                <td>--</td>
+                                <td><span class="quality-flag poor">Poor</span></td>
+                                <td><span class="status warning">No Data</span></td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="pagination">
+                    <button class="page-btn">Previous</button>
+                    <span class="page-info">Page 1 of 5</span>
+                    <button class="page-btn">Next</button>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="footer-content">
+            <p>&copy; 2025 Groundwater Monitoring System. Version 2.1.0</p>
+            <div class="footer-links">
+                <a href="#">Privacy Policy</a>
+                <a href="#">Terms of Service</a>
+                <a href="#">Support</a>
+            </div>
+        </div>
+    </footer>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="shared-notifications.js"></script>
+    <script src="script.js"></script>
+    <script>
+        let trendChart;
+        const stationData = {
+            all: {
+                title: 'All Stations',
+                level: '38.6m',
+                change: '+1.2%',
+                battery: '78%',
+                status: 'Mixed',
+                reading: '2 min ago',
+                datasets: [{
+                    label: 'ST001',
+                    data: [45, 42, 38, 35, 32, 28],
+                    borderColor: '#D32F2F',
+                    tension: 0.1
+                }, {
+                    label: 'ST002',
+                    data: [52, 48, 45, 42, 40, 38],
+                    borderColor: '#FBC02D',
+                    tension: 0.1
+                }, {
+                    label: 'ST003',
+                    data: [38, 40, 42, 45, 48, 50],
+                    borderColor: '#388E3C',
+                    tension: 0.1
+                }]
+            },
+            ST001: {
+                title: 'Station 001',
+                level: '28.5m',
+                change: '-3.2%',
+                battery: '65%',
+                status: 'Critical',
+                reading: '2 min ago',
+                datasets: [{
+                    label: 'ST001',
+                    data: [45, 42, 38, 35, 32, 28],
+                    borderColor: '#D32F2F',
+                    tension: 0.1
+                }]
+            },
+            ST002: {
+                title: 'Station 002',
+                level: '38.2m',
+                change: '+0.8%',
+                battery: '82%',
+                status: 'Warning',
+                reading: '3 min ago',
+                datasets: [{
+                    label: 'ST002',
+                    data: [52, 48, 45, 42, 40, 38],
+                    borderColor: '#FBC02D',
+                    tension: 0.1
+                }]
+            },
+            ST003: {
+                title: 'Station 003',
+                level: '50.1m',
+                change: '+2.5%',
+                battery: '88%',
+                status: 'Normal',
+                reading: '1 min ago',
+                datasets: [{
+                    label: 'ST003',
+                    data: [38, 40, 42, 45, 48, 50],
+                    borderColor: '#388E3C',
+                    tension: 0.1
+                }]
+            }
+        };
+
+        function updateDashboard(station, threshold) {
+            const data = stationData[station];
+            const thresholdValue = threshold || document.getElementById('thresholdSlider').value;
+            
+            // Update summary cards
+            document.getElementById('summaryTitle').textContent = `Resource Summary - ${data.title}`;
+            document.getElementById('currentLevel').textContent = data.level;
+            document.getElementById('levelChange').textContent = data.change;
+            document.getElementById('batteryLevel').textContent = data.battery;
+            document.getElementById('batteryStatus').textContent = data.status;
+            document.getElementById('lastReading').textContent = data.reading;
+            
+            // Update chart title and data
+            document.getElementById('chartTitle').textContent = `Water Level Trends - ${data.title}`;
+            
+            if (trendChart) {
+                // Add threshold line dataset
+                const datasets = [...data.datasets, {
+                    label: 'Alert Threshold',
+                    data: Array(6).fill(thresholdValue),
+                    borderColor: '#FF5722',
+                    borderDash: [10, 5],
+                    borderWidth: 2,
+                    pointRadius: 0,
+                    fill: false
+                }];
+                
+                trendChart.data.datasets = datasets;
+                trendChart.update();
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', function() {
+            // Initialize map
+            if (typeof L !== 'undefined') {
+                const map = L.map('map').setView([28.6139, 77.2090], 10);
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+                
+                const stations = [
+                    {lat: 28.6139, lng: 77.2090, name: 'ST001', status: 'critical'},
+                    {lat: 28.6129, lng: 77.2290, name: 'ST002', status: 'warning'},
+                    {lat: 28.6149, lng: 77.1990, name: 'ST003', status: 'normal'}
+                ];
+                
+                stations.forEach(station => {
+                    const color = station.status === 'critical' ? 'red' : 
+                                 station.status === 'warning' ? 'orange' : 'green';
+                    L.circleMarker([station.lat, station.lng], {
+                        color: color,
+                        fillColor: color,
+                        fillOpacity: 0.7,
+                        radius: 8
+                    }).bindPopup(`<b>${station.name}</b><br>Status: ${station.status}`).addTo(map);
+                });
+            }
+            
+            // Initialize chart
+            if (typeof Chart !== 'undefined') {
+                const ctx = document.getElementById('trendChart').getContext('2d');
+                trendChart = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'],
+                        datasets: stationData.all.datasets
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: {
+                            y: {
+                                beginAtZero: false,
+                                title: {
+                                    display: true,
+                                    text: 'Water Level (m)'
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+            
+            // Station selector change handler
+            document.getElementById('stationSelect').addEventListener('change', function() {
+                updateDashboard(this.value);
+            });
+            
+            // Threshold slider change handler
+            document.getElementById('thresholdSlider').addEventListener('input', function() {
+                document.getElementById('thresholdValue').textContent = this.value + 'm';
+                const station = document.getElementById('stationSelect').value;
+                updateDashboard(station, this.value);
+            });
+        });
+    </script>
+</body>
+</html>
