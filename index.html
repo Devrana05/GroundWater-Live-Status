@@ -228,7 +228,9 @@
                         <i class="fas fa-download"></i>
                     </button>
                 </div>
-                <canvas id="trendChart" class="chart-container"></canvas>
+                <div class="chart-container">
+                    <canvas id="trendChart"></canvas>
+                </div>
             </div>
 
             <!-- Alerts Panel -->
@@ -344,7 +346,172 @@
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="shared-notifications.js?v=22"></script>
-    <script src="script.js?v=22"></script>
+    <script src="shared-notifications.js"></script>
+    <script src="script.js"></script>
+    <script>
+        let trendChart;
+        const stationData = {
+            all: {
+                title: 'All Stations',
+                level: '38.6m',
+                change: '+1.2%',
+                battery: '78%',
+                status: 'Mixed',
+                reading: '2 min ago',
+                datasets: [{
+                    label: 'ST001',
+                    data: [45, 42, 38, 35, 32, 28],
+                    borderColor: '#D32F2F',
+                    tension: 0.1
+                }, {
+                    label: 'ST002',
+                    data: [52, 48, 45, 42, 40, 38],
+                    borderColor: '#FBC02D',
+                    tension: 0.1
+                }, {
+                    label: 'ST003',
+                    data: [38, 40, 42, 45, 48, 50],
+                    borderColor: '#388E3C',
+                    tension: 0.1
+                }]
+            },
+            ST001: {
+                title: 'Station 001',
+                level: '28.5m',
+                change: '-3.2%',
+                battery: '65%',
+                status: 'Critical',
+                reading: '2 min ago',
+                datasets: [{
+                    label: 'ST001',
+                    data: [45, 42, 38, 35, 32, 28],
+                    borderColor: '#D32F2F',
+                    tension: 0.1
+                }]
+            },
+            ST002: {
+                title: 'Station 002',
+                level: '38.2m',
+                change: '+0.8%',
+                battery: '82%',
+                status: 'Warning',
+                reading: '3 min ago',
+                datasets: [{
+                    label: 'ST002',
+                    data: [52, 48, 45, 42, 40, 38],
+                    borderColor: '#FBC02D',
+                    tension: 0.1
+                }]
+            },
+            ST003: {
+                title: 'Station 003',
+                level: '50.1m',
+                change: '+2.5%',
+                battery: '88%',
+                status: 'Normal',
+                reading: '1 min ago',
+                datasets: [{
+                    label: 'ST003',
+                    data: [38, 40, 42, 45, 48, 50],
+                    borderColor: '#388E3C',
+                    tension: 0.1
+                }]
+            }
+        };
+
+        function updateDashboard(station, threshold) {
+            const data = stationData[station];
+            const thresholdValue = threshold || document.getElementById('thresholdSlider').value;
+            
+            // Update summary cards
+            document.getElementById('summaryTitle').textContent = `Resource Summary - ${data.title}`;
+            document.getElementById('currentLevel').textContent = data.level;
+            document.getElementById('levelChange').textContent = data.change;
+            document.getElementById('batteryLevel').textContent = data.battery;
+            document.getElementById('batteryStatus').textContent = data.status;
+            document.getElementById('lastReading').textContent = data.reading;
+            
+            // Update chart title and data
+            document.getElementById('chartTitle').textContent = `Water Level Trends - ${data.title}`;
+            
+            if (trendChart) {
+                // Add threshold line dataset
+                const datasets = [...data.datasets, {
+                    label: 'Alert Threshold',
+                    data: Array(6).fill(thresholdValue),
+                    borderColor: '#FF5722',
+                    borderDash: [10, 5],
+                    borderWidth: 2,
+                    pointRadius: 0,
+                    fill: false
+                }];
+                
+                trendChart.data.datasets = datasets;
+                trendChart.update();
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', function() {
+            // Initialize map
+            if (typeof L !== 'undefined') {
+                const map = L.map('map').setView([28.6139, 77.2090], 10);
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+                
+                const stations = [
+                    {lat: 28.6139, lng: 77.2090, name: 'ST001', status: 'critical'},
+                    {lat: 28.6129, lng: 77.2290, name: 'ST002', status: 'warning'},
+                    {lat: 28.6149, lng: 77.1990, name: 'ST003', status: 'normal'}
+                ];
+                
+                stations.forEach(station => {
+                    const color = station.status === 'critical' ? 'red' : 
+                                 station.status === 'warning' ? 'orange' : 'green';
+                    L.circleMarker([station.lat, station.lng], {
+                        color: color,
+                        fillColor: color,
+                        fillOpacity: 0.7,
+                        radius: 8
+                    }).bindPopup(`<b>${station.name}</b><br>Status: ${station.status}`).addTo(map);
+                });
+            }
+            
+            // Initialize chart
+            if (typeof Chart !== 'undefined') {
+                const ctx = document.getElementById('trendChart').getContext('2d');
+                trendChart = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'],
+                        datasets: stationData.all.datasets
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: {
+                            y: {
+                                beginAtZero: false,
+                                title: {
+                                    display: true,
+                                    text: 'Water Level (m)'
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+            
+            // Station selector change handler
+            document.getElementById('stationSelect').addEventListener('change', function() {
+                updateDashboard(this.value);
+            });
+            
+            // Threshold slider change handler
+            document.getElementById('thresholdSlider').addEventListener('input', function() {
+                document.getElementById('thresholdValue').textContent = this.value + 'm';
+                const station = document.getElementById('stationSelect').value;
+                updateDashboard(station, this.value);
+            });
+        });
+    </script>
 </body>
 </html>
