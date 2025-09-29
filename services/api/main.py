@@ -6,6 +6,12 @@ import json
 
 app = FastAPI(title="Groundwater Monitoring API", version="1.0.0")
 
+# Vercel handler
+def handler(request, context):
+    import mangum
+    asgi_handler = mangum.Mangum(app)
+    return asgi_handler(request, context)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
