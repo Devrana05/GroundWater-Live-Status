@@ -5,7 +5,7 @@ echo "Starting Groundwater Monitoring System..."
 echo "Starting API server..."
 cd services/api
 pip install fastapi uvicorn --quiet
-python main.py &
+uvicorn main:app --host 0.0.0.0 --port 8000 &
 API_PID=$!
 cd ../..
 
