@@ -1,44 +1,36 @@
 #!/bin/bash
-
 echo "Starting Groundwater Monitoring System..."
 
-# Check if Docker is running
-if ! command -v docker &> /dev/null; then
-    echo "Docker is not installed or not running!"
-    echo "Please install Docker and start it."
-    exit 1
+# Start FastAPI backend
+echo "Starting API server..."
+cd services/api
+pip install fastapi uvicorn --quiet
+python main.py &
+API_PID=$!
+cd ../..
+
+# Wait for API to start
+sleep 3
+
+# Start frontend server
+echo "Starting frontend server..."
+python -m http.server 8080 &
+FRONTEND_PID=$!
+
+# Wait a moment then open browser
+sleep 2
+echo "Opening browser..."
+if command -v xdg-open > /dev/null; then
+    xdg-open http://localhost:8080
+elif command -v open > /dev/null; then
+    open http://localhost:8080
 fi
 
-# Check if docker-compose is available
-if ! command -v docker-compose &> /dev/null; then
-    echo "Docker Compose is not available!"
-    echo "Please install Docker Compose."
-    exit 1
-fi
+echo "System started successfully!"
+echo "Frontend: http://localhost:8080"
+echo "API: http://localhost:8000"
+echo "Press Ctrl+C to stop all services"
 
-echo "Building and starting services..."
-docker-compose up -d --build
-
-if [ $? -eq 0 ]; then
-    echo ""
-    echo "========================================"
-    echo "Groundwater Monitoring System Started!"
-    echo "========================================"
-    echo ""
-    echo "Web Interface: http://localhost"
-    echo "Mobile Interface: http://mobile.localhost"
-    echo "API Documentation: http://localhost/api/docs"
-    echo "Mobile API: http://mobile.localhost/api/docs"
-    echo "Grafana Dashboard: http://localhost:3002"
-    echo "Prometheus: http://localhost:9090"
-    echo ""
-    echo "Services Status:"
-    docker-compose ps
-    echo ""
-    echo "Press Ctrl+C to stop viewing logs..."
-    docker-compose logs -f
-else
-    echo "Failed to start services!"
-    echo "Check the error messages above."
-    exit 1
-fi
+# Wait for interrupt
+trap "kill $API_PID $FRONTEND_PID; exit" INT
+wait

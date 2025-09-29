@@ -5,9 +5,8 @@ A complete end-to-end solution for real-time groundwater resource evaluation usi
 ## 🚀 Quick Start
 
 ### Prerequisites
-- Docker & Docker Compose (Recommended)
+- Python 3.8+ (for backend)
 - Web Browser (Chrome, Firefox, Safari)
-- Python 3.8+ (for development)
 
 ### 1. Clone Repository
 ```bash
@@ -15,220 +14,104 @@ git clone https://github.com/your-username/groundwater-monitoring-system.git
 cd groundwater-monitoring-system
 ```
 
-### 2. Full Stack Deployment (Recommended)
-```bash
-# Windows
-start.bat
+### 2. Run Complete System (Recommended)
 
-# Linux/Mac
+**Windows:**
+```bash
+start.bat
+```
+
+**Linux/Mac:**
+```bash
 chmod +x start.sh
 ./start.sh
 ```
 
-### 3. Frontend Only (Development)
+### 3. Manual Setup
+
+**Backend:**
 ```bash
-# Open HTML files directly in browser
-open index.html
-# Or serve with Python
+cd services/api
+pip install -r requirements.txt
+python main.py
+```
+
+**Frontend:**
+```bash
 python -m http.server 8080
 ```
 
-### 4. Manual Backend Setup
-```bash
-# Install dependencies
-pip install -r requirements.txt
+## 🌐 Access Points
 
-# Start individual services
-cd services/api && python main.py
-cd services/ingest && python main.py
-cd services/etl && python processor.py
-cd services/ml && python models.py
-cd services/alerts && python engine.py
-```
+- **Web Dashboard**: http://localhost:8080
+- **API Documentation**: http://localhost:8000/docs
+- **Login Credentials**: admin / admin123
 
 ## 📊 Features
 
 ### Frontend Dashboard
 - **Responsive Design** - Works on desktop, tablet, and mobile
 - **Dark/Light Theme** - Dynamic theme switching with persistence
-- **Interactive Maps** - Station locations with status indicators using Leaflet.js
-- **Real-time Charts** - Water level trends using Chart.js
+- **Interactive Maps** - Station locations with status indicators
+- **Real-time Charts** - Water level trends with instant switching
 - **Alert Management** - Cross-page notification system
 - **Data Filtering** - Station and status-based filtering
-- **Mobile Navigation** - Collapsible sidebar for mobile devices
+- **Forecasting** - ML-powered groundwater level predictions
 
-### Data Explorer
-- **Station Selector** - Filter data by specific monitoring stations
-- **Status Filter** - Filter by critical, warning, or normal status
-- **Responsive Tables** - Dynamic data updates based on selections
-- **Overview Cards** - Real-time count updates for different alert types
-- **No Data Handling** - Clear messaging when no data matches filters
+### Backend API
+- **FastAPI** - Modern, fast web framework
+- **Authentication** - JWT-based security
+- **Real-time Data** - WebSocket support
+- **Caching** - Redis integration for performance
+- **Database** - PostgreSQL/TimescaleDB support
 
-### Backend Services (Python)
-- **Data Ingestion** - FastAPI service for DWLR data collection
-- **MQTT Support** - Real-time device communication
-- **Database Integration** - PostgreSQL/TimescaleDB support
-- **Message Queue** - Kafka integration for data streaming
+## 🛠️ Technologies
+
+### Frontend
+- HTML5, CSS3, JavaScript (ES6)
+- Chart.js for data visualization
+- Leaflet.js for interactive maps
+- Font Awesome icons
+
+### Backend
+- Python 3.8+ with FastAPI
+- Optional: PostgreSQL, Redis, JWT libraries
+- Fallback demo mode when dependencies unavailable
 
 ## 📁 Project Structure
 
 ```
 SIH/
-├── services/
-│   ├── ingest/          # Data ingestion service (Python/FastAPI)
-│   │   ├── main.py      # FastAPI ingest service
-│   │   ├── requirements.txt
-│   │   └── Dockerfile
-│   ├── api/             # REST API service (Python/FastAPI)
-│   │   └── main.py
-│   ├── etl/             # ETL processing (Python)
-│   │   └── processor.py
-│   ├── ml/              # ML models & training (Python)
-│   │   └── models.py
-│   └── alerts/          # Alert engine (Python)
-│       └── engine.py
-├── db/
-│   └── init.sql         # Database schema
-├── monitoring/
-│   └── prometheus.yml   # Prometheus configuration
-├── mqtt/
-│   └── mosquitto.conf   # MQTT broker configuration
-├── index.html           # Main dashboard page
-├── alerts.html          # Alerts management page
-├── stations.html        # Stations monitoring page
-├── data-explorer.html   # Data exploration page
-├── styles.css           # Main stylesheet with theme support
-├── script.js            # Dashboard JavaScript
-├── alerts.js            # Alerts page JavaScript with filtering
-├── stations.js          # Stations page JavaScript
-├── data-explorer.js     # Data explorer with responsive filtering
-├── shared-notifications.js # Cross-page notification system
-├── theme-init.js        # Instant theme initialization
-├── test_data_generator.py # Test data generation script
-├── requirements.txt     # Python dependencies
-├── docker-compose.yml   # Docker services configuration
+├── services/api/        # FastAPI backend
+├── *.html              # Frontend pages
+├── *.css               # Stylesheets
+├── *.js                # JavaScript files
+├── start.bat           # Windows startup script
+├── start.sh            # Linux/Mac startup script
 └── README.md
 ```
 
-## 🛠️ Technologies Used
-
-### Frontend
-- **HTML5** - Page structure and markup
-- **CSS3** - Styling, responsive design, dark/light themes
-- **JavaScript (ES6)** - Interactive functionality and data filtering
-- **Leaflet.js** - Interactive maps for station locations
-- **Chart.js** - Data visualization and trend charts
-- **Font Awesome** - Icon library
-
-### Backend
-- **Python 3.8+** - Backend services
-- **FastAPI** - REST API framework
-- **Pydantic** - Data validation
-- **Asyncio** - Asynchronous programming
-- **psycopg2** - PostgreSQL database adapter
-- **paho-mqtt** - MQTT client library
-- **kafka-python** - Kafka message streaming
-
-### Database & Messaging
-- **TimescaleDB/PostgreSQL** - Time-series data storage
-- **Apache Kafka** - Message streaming
-- **MQTT (Mosquitto)** - IoT device communication
-
 ## 🎯 Pages
 
-1. **Login** (`login.html`) - Authentication page with modern gradient design
-2. **Dashboard** (`index.html`) - Overview with maps and charts
-3. **Data Explorer** (`data-explorer.html`) - Filterable data tables with station/status selectors
-4. **Alerts** (`alerts.html`) - Alert management with filtering and cross-page notifications
-5. **Stations** (`stations.html`) - Station monitoring with real-time status updates
-6. **Forecasting** (`forecasting.html`) - ML-powered groundwater level predictions
+1. **Login** - Authentication with admin/admin123
+2. **Dashboard** - Overview with maps and charts
+3. **Data Explorer** - Filterable data tables
+4. **Alerts** - Alert management with filtering
+5. **Stations** - Station monitoring
+6. **Forecasting** - ML-powered predictions
 
 ## 📚 API Endpoints
 
-### Data Ingestion
-- `POST /ingest/dwlr` - Submit DWLR reading
-- `GET /health` - Service health check
+- `GET /wells` - Get all wells data
+- `GET /dashboard/summary` - Dashboard statistics
+- `GET /alerts` - Active alerts
+- `GET /wells/{id}/timeseries` - Time series data
+- `POST /auth/login` - User authentication
 
-### Testing Data Ingestion
-```bash
-# HTTP Test
-curl -X POST "http://localhost:8000/ingest/dwlr" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "well_id": "ST001",
-    "timestamp": "2024-01-15T14:30:00Z",
-    "water_level": 25.5,
-    "battery_level": 85.2,
-    "temperature": 22.1
-  }'
+## 🔧 Development
 
-# Generate test data
-python test_data_generator.py
-```
-
-## 🎯 Current Implementation
-
-### ✅ Completed Features
-- **Responsive Dashboard** - Works on all device sizes
-- **Dark/Light Theme** - Instant theme switching with localStorage persistence
-- **Interactive Maps** - Station locations with color-coded status indicators
-- **Data Filtering** - Station and status-based filtering in data explorer
-- **Alert Management** - Cross-page notification system with filtering
-- **Data Ingestion API** - FastAPI backend for DWLR data collection
-- **MQTT Integration** - Real-time device communication support
-
-### 🔄 Backend Services Available
-- **Ingest Service** - FastAPI service for data collection
-- **Database Schema** - PostgreSQL/TimescaleDB structure
-- **Docker Configuration** - Multi-service orchestration
-- **MQTT Broker** - Device communication setup
-
-## 🚀 Getting Started
-
-### Option 1: Full Stack (Recommended)
-```bash
-# Windows
-start.bat
-
-# Linux/Mac
-chmod +x start.sh && ./start.sh
-```
-
-### Option 2: Docker Compose
-```bash
-docker-compose up -d --build
-```
-
-### Option 3: Frontend Only
-```bash
-# Open index.html in browser or
-python -m http.server 8080
-```
-
-### Option 4: Development Mode
-```bash
-# Start individual services
-cd services/api && python main.py
-cd services/ingest && python main.py
-# etc...
-```
-
-## 🌐 Access Points
-
-- **Web Dashboard**: http://localhost
-- **Mobile Interface**: http://mobile.localhost
-- **API Documentation**: http://localhost/api/docs
-- **Mobile API Docs**: http://mobile.localhost/api/docs
-- **Grafana Monitoring**: http://localhost:3002 (admin/admin)
-- **Prometheus Metrics**: http://localhost:9090
-
-## 👤 Authentication
-- **Login Page**: `login.html` - Modern authentication interface
-- **Default Credentials**:
-  - **Username**: admin
-  - **Password**: admin123
-- **Features**: Automatic redirection, session management, logout functionality
+The system includes fallback demo data when backend is unavailable, making it perfect for development and demonstrations.
 
 ## 📄 License
 
-This project is licensed under the MIT License.
+MIT License

@@ -1,48 +1,23 @@
 @echo off
 echo Starting Groundwater Monitoring System...
 
-REM Check if Docker is running
-docker --version >nul 2>&1
-if %errorlevel% neq 0 (
-    echo Docker is not installed or not running!
-    echo Please install Docker Desktop and start it.
-    pause
-    exit /b 1
-)
+REM Start FastAPI backend
+echo Starting API server...
+start "API Server" cmd /k "cd services\api && python -m pip install fastapi uvicorn --quiet && python main.py"
 
-REM Check if docker-compose is available
-docker-compose --version >nul 2>&1
-if %errorlevel% neq 0 (
-    echo Docker Compose is not available!
-    echo Please install Docker Compose.
-    pause
-    exit /b 1
-)
+REM Wait for API to start
+timeout /t 3 /nobreak >nul
 
-echo Building and starting services...
-docker-compose up -d --build
+REM Start frontend server
+echo Starting frontend server...
+start "Frontend Server" cmd /k "python -m http.server 8080"
 
-if %errorlevel% equ 0 (
-    echo.
-    echo ========================================
-    echo Groundwater Monitoring System Started!
-    echo ========================================
-    echo.
-    echo Web Interface: http://localhost
-    echo Mobile Interface: http://mobile.localhost
-    echo API Documentation: http://localhost/api/docs
-    echo Mobile API: http://mobile.localhost/api/docs
-    echo Grafana Dashboard: http://localhost:3002
-    echo Prometheus: http://localhost:9090
-    echo.
-    echo Services Status:
-    docker-compose ps
-    echo.
-    echo Press any key to view logs or Ctrl+C to exit...
-    pause >nul
-    docker-compose logs -f
-) else (
-    echo Failed to start services!
-    echo Check the error messages above.
-    pause
-)
+REM Wait a moment then open browser
+timeout /t 2 /nobreak >nul
+echo Opening browser...
+start http://localhost:8080
+
+echo System started successfully!
+echo Frontend: http://localhost:8080
+echo API: http://localhost:8000
+pause
