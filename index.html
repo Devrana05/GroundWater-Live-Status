@@ -17,6 +17,33 @@
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
     <script src="theme-init.js"></script>
     <script src="api.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const profileBtn = document.getElementById('profileBtn');
+            const profilePopup = document.getElementById('profilePopup');
+            const logoutBtn = document.getElementById('logoutBtn');
+            
+            if (profileBtn && profilePopup) {
+                profileBtn.addEventListener('click', function(e) {
+                    e.stopPropagation();
+                    profilePopup.classList.toggle('show');
+                });
+                
+                document.addEventListener('click', function(e) {
+                    if (!profilePopup.contains(e.target) && !profileBtn.contains(e.target)) {
+                        profilePopup.classList.remove('show');
+                    }
+                });
+            }
+            
+            if (logoutBtn) {
+                logoutBtn.addEventListener('click', function() {
+                    localStorage.removeItem('isLoggedIn');
+                    window.location.href = 'login.html';
+                });
+            }
+        });
+    </script>
 </head>
 <body>
     <!-- Header -->
